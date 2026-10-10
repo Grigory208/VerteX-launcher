@@ -205,7 +205,10 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
       custom: fabricVersionName
     };
   }
-
+  // Подключаем встроенный генератор случайных ключей Windows/Node.js
+  const crypto = require('crypto');
+  // Генерируем случайный уникальный UUID для каждого игрока
+  const guestUUID = crypto.randomUUID();
 
   // Сборка финального конфига для запуска
   const launchConfig = {
@@ -213,7 +216,7 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
     authorization: {
       access_token: '',
       client_token: '',
-      uuid: '00000000-0000-0000-0000-000000000000',
+      uuid:  guestUUID, // ТЕПЕРЬ ТУТ СЛУЧАЙНЫЙ УНИКАЛЬНЫЙ UUID!
       name: username,
       user_properties: '{}',
       meta: { type: 'mojang', displayName: username },
