@@ -207,8 +207,19 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
   }
   // Подключаем встроенный генератор случайных ключей Windows/Node.js
   const crypto = require('crypto');
-  // Генерируем случайный уникальный UUID для каждого игрока
-  const guestUUID = crypto.randomUUID();
+
+// Функция генерации правильного Offline UUID на основе никнейма
+function getOfflineUUID(username) {
+  const hash = crypto.createHash('md5').update('OfflinePlayer:' + username).digest();
+  // Выставляем правильные биты версии 3 для Майнкрафта
+  hash[6] = (hash[6] & 0x0f) | 0x30;
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+  const hex = hash.toString('hex');
+  return `${hex.substring(0,8)}-${hex.substring(8,12)}-${hex.substring(12,16)}-${hex.substring(16,20)}-${hex.substring(20)}`;
+}
+
+const guestUUID = getOfflineUUID(username);
+
 
   // Сборка финального конфига для запуска
   const launchConfig = {
