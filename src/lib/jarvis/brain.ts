@@ -66,8 +66,10 @@ async function askPollinations(messages: ChatMsg[]): Promise<string> {
 }
 
 /** Задать вопрос мозгу. Сначала локальная Ollama, при недоступности — Pollinations. */
-export async function brainAnswer(history: ChatMsg[]): Promise<string> {
-  const messages: ChatMsg[] = [{ role: 'system', content: JARVIS_SYSTEM }, ...history];
+export async function brainAnswer(history: ChatMsg[], extraSystem?: string): Promise<string> {
+  const messages: ChatMsg[] = [{ role: 'system', content: JARVIS_SYSTEM }];
+  if (extraSystem) messages.push({ role: 'system', content: extraSystem });
+  messages.push(...history);
 
   // В Electron — через main-процесс (нет CORS:_renderer часто заблокирован для localhost Ollama).
   const api = (window as unknown as { electronAPI?: { jarvisChat?: (m: ChatMsg[]) => Promise<string> } }).electronAPI;

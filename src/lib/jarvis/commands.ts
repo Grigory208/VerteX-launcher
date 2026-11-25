@@ -42,16 +42,21 @@ export function parseCommand(text: string): JarvisIntent {
   const loader = extractLoader(text);
   const mcVersion = extractMcVersion(text);
 
-  // Собери/создай сборку ... (моды после ":", "," или "мод(ы)")
-  const buildMatch = t.match(/(?:собери|создай|сделай|сгенерируй)\s+(?: мне)?(?:сборк\S*|модпак\S*|пак\S*|клиент\S*)/);
-  if (buildMatch) {
-    const after = text.slice((buildMatch.index ?? 0) + buildMatch[0].length);
-    const namesRaw =
-      after.split(/[:;]|\bмод(?:ы|ов)?\b/i).slice(1).join(',') || after;
-    const modNames = namesRaw
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter((s) => s && !/^\d/.test(s) && !extractLoader(s) && !extractMcVersion(s));
+  // Собери/создай сборку/клиент/модпак — триггер и существительное может разделять
+  // что угодно ("создай оптимизированную сборку..."). Названия модов — после ":", ";"
+  // или оборота "моды ..."; если их нет — состав предложит мозг (LLM) и всё проверится.
+  const hasTrigger = /(?:собери|создай|сделай|сгенерируй|подбери|составь)/.test(t);
+  const hasNoun = /(?:сборк|модпак|\bпак\b|клиент)/.test(t);
+  if (hasTrigger && hasNoun) {
+    const colonIdx = text.search(/[:;]/);
+    let modNames: string[] = [];
+    if (colonIdx >= 0) {
+      modNames = text.slice(colonIdx + 1).split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    } else {
+      const m = text.match(/мод(?:ы|ов)?\s+([^.!?]+)/i);
+      if (m) modNames = m[1].split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    }
+    modNames = modNames.filter((x) => x && !x.match(/^1\.\d/) && !extractLoader(x));
     return { kind: 'build', mcVersion, loader: loader ?? 'fabric', modNames };
   }
 

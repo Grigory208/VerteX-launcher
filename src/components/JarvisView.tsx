@@ -7,6 +7,9 @@ import type { Modpack, ModpackMod, ViewKey } from '@/types';
 import { brainAnswer, type ChatMsg } from '@/lib/jarvis/brain';
 import { parseCommand, findCompatibleMod, type JarvisIntent } from '@/lib/jarvis/commands';
 import { checkPackCompat, compatToText, type CompatReport } from '@/lib/jarvis/compat';
+import { suggestModNames, javaFor } from '@/lib/jarvis/builder';
+import { LAUNCHER_KB, errorExplainPrompt } from '@/lib/jarvis/kb';
+import { Markdown } from '@/lib/jarvis/markdown';
 
 interface JarvisViewProps {
   auth: ReturnType<typeof useAuth>;
@@ -19,6 +22,7 @@ interface ChatEntry {
   report?: CompatReport;
   draftMods?: ModpackMod[];
   draftMeta?: { mcVersion: string; loader: string; name: string };
+  table?: { head: string[]; rows: string[][] };
 }
 
 const HELLO =
@@ -40,6 +44,24 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [entries, busy]);
 
+  // PlayView может прислать ошибку запуска на объяснение (jarvis-explain-error).
+  useEffect(() => {
+    const applyPending = () => {
+      const pending = sessionStorage.getItem('jarvis-pending-error');
+      if (!pending) return;
+      sessionStorage.removeItem('jarvis-pending-error');
+      push({ role: 'user', text: pending });
+      setBusy(true);
+      brainAnswer([{ role: 'user', content: pending }], LAUNCHER_KB)
+        .then((a) => push({ role: 'jarvis', text: a }))
+        .catch((e) => push({ role: 'jarvis', text: `Ошибка: ${(e as Error).message}` }))
+        .finally(() => setBusy(false));
+    };
+    applyPending();
+    window.addEventListener('jarvis-explain-error', applyPending);
+    return () => window.removeEventListener('jarvis-explain-error', applyPending);
+  }, []);
+
   const push = (e: ChatEntry) => setEntries((es) => [...es, e]);
 
   const fetchPackPacks = useCallback(async (): Promise<Modpack[]> => {
@@ -47,15 +69,26 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     return (data ?? []) as Modpack[];
   }, []);
 
-  const handleBuild = useCallback(async (mcVersion: string, loader: string, modNames: string[]) => {
-    if (!modNames.length) {
-      push({ role: 'jarvis', text: 'Перечисли моды через запятую: "собери сборку под 1.21.1 fabric: sodium, lithium".' });
-      return;
+  const handleBuild = useCallback(async (requestText: string, mcVersion: string, loader: string, modNames: string[]) => {
+    let names = modNames;
+    if (!names.length) {
+      // Состав не задан — пусть мозг предложит реальные моды, Modrinth проверит каждый.
+      push({ role: 'jarvis', text: `Состав не задан — прошу мозг подобрать моды под запрос, затем проверю каждый по Modrinth (${mcVersion} · ${loader})...` });
+      try {
+        names = await suggestModNames(requestText);
+      } catch (e) {
+        push({ role: 'jarvis', text: `Не смог получить состав: ${(e as Error).message}\nМожно и вручную: "собери сборку под 1.21.1 fabric: sodium, lithium"` });
+        return;
+      }
+      if (!names.length) {
+        push({ role: 'jarvis', text: 'Мозг не дал валидный список. Попробуй так: "собери сборку под 1.21.1 fabric: sodium, lithium, jei".' });
+        return;
+      }
     }
-    push({ role: 'jarvis', text: `Собираю: ${modNames.join(', ')} под ${mcVersion} + ${loader}. Ищу на Modrinth...` });
+    push({ role: 'jarvis', text: `Подбираю версии: ${names.join(', ')} под ${mcVersion} + ${loader}. Java: ${javaFor(mcVersion)}. Лоадер лаунчер поставит сам.` });
     const mods: ModpackMod[] = [];
     const fails: string[] = [];
-    for (const name of modNames) {
+    for (const name of names) {
       try {
         const { mod, problem } = await findCompatibleMod(name, mcVersion, loader);
         if (mod) mods.push(mod);
@@ -64,19 +97,24 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
         fails.push(`"${name}": ${(e as Error).message}`);
       }
     }
+    const rows: string[][] = [
+      ...mods.map((m) => [m.title, m.file_name, 'OK']),
+      ...fails.map((f) => [f.split(':')[0].replace(/"/g, ''), '—', f]),
+    ];
     if (!mods.length) {
       push({ role: 'jarvis', text: `Ни один мод не подошёл:\n${fails.map((f) => `• ${f}`).join('\n')}` });
       return;
     }
     const report = await checkPackCompat(mods, mcVersion, loader);
     const lines = [`Подобрал ${mods.length} мод(ов)${fails.length ? `, не подошло: ${fails.length}` : ''}.`];
-    if (fails.length) lines.push('Не найдено:', ...fails.map((f) => `• ${f}`));
+    if (!report.ok) lines.push(compatToText(report));
     push({
       role: 'jarvis',
-      text: lines.join('\n') + (report.ok ? '\nВзаимные зависимости в порядке.' : `\n${compatToText(report)}`),
+      text: lines.join('\n') + (report.ok ? '\nВзаимные зависимости в порядке.' : ''),
       report: report,
       draftMods: mods,
       draftMeta: { mcVersion, loader, name: `Сборка JARVIS (${mcVersion} ${loader})` },
+      table: { head: ['Мод', 'Файл', 'Статус'], rows },
     });
   }, []);
 
@@ -128,7 +166,7 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     try {
       const intent: JarvisIntent = parseCommand(text);
       if (intent.kind === 'build') {
-        await handleBuild(intent.mcVersion ?? '1.21.1', intent.loader ?? 'fabric', intent.modNames);
+        await handleBuild(text, intent.mcVersion ?? '1.21.1', intent.loader ?? 'fabric', intent.modNames);
       } else if (intent.kind === 'compat') {
         await handleCompat(intent.packName);
       } else if (intent.kind === 'find') {
@@ -199,13 +237,33 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
                   : 'bg-launcher-surface border border-launcher-border'
               }`}
             >
+              <Markdown text={e.text} />
+              {e.table && (
+                <table className="mt-2 border-collapse w-full text-xs">
+                  <thead>
+                    <tr>
+                      {e.table.head.map((h) => (
+                        <th key={h} className="text-left border border-launcher-border px-2 py-1">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {e.table.rows.map((r, ri) => (
+                      <tr key={ri}>
+                        {r.map((c, ci) => (
+                          <td key={ci} className="border border-launcher-border px-2 py-1 align-top">{c}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
               {e.report && (
                 <div className={`flex items-center gap-1.5 mb-1.5 text-xs ${e.report.ok ? 'text-green-400' : 'text-amber-400'}`}>
                   {e.report.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                   {e.report.ok ? 'Совместимость: OK' : 'Совместимость: есть проблемы'}
                 </div>
               )}
-              {e.text}
               {e.draftMods && e.draftMeta && (
                 <button
                   onClick={() => void createDraftPack(i)}

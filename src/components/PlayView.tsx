@@ -7,6 +7,7 @@ import {
   Play, Settings2, Cpu, MemoryStick, HardDrive, Monitor, CheckCircle2, Download, Info, AlertTriangle, Layers, Package, RefreshCw, FolderUp, Trash2, ChevronDown
 } from 'lucide-react';
 import { SettingsModal } from '@/components/SettingsModal';
+import { errorExplainPrompt } from '@/lib/jarvis/kb';
 
 interface PlayViewProps {
   auth: ReturnType<typeof useAuth>;
@@ -391,10 +392,21 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
         setLaunched(true);
         setTimeout(() => setLaunched(false), 5000);
       } else {
-        setLaunchError(result.error ?? 'Не удалось запустить игру');
+        const errMsg = result.error ?? 'Не удалось запустить игру';
+        setLaunchError(errMsg);
+        // Мост в JARVIS: пусть ассистент объяснит ошибку запуска.
+        try {
+          sessionStorage.setItem('jarvis-pending-error', errorExplainPrompt(errMsg));
+          window.dispatchEvent(new Event('jarvis-explain-error'));
+        } catch { /* sessionStorage может быть недоступен */ }
       }
     } catch (err: any) {
-      setLaunchError(err.message || 'Ошибка запуска');
+      const errMsg = err.message || 'Ошибка запуска';
+      setLaunchError(errMsg);
+      try {
+        sessionStorage.setItem('jarvis-pending-error', errorExplainPrompt(errMsg));
+        window.dispatchEvent(new Event('jarvis-explain-error'));
+      } catch { /* sessionStorage может быть недоступен */ }
     } finally {
       setLaunching(false);
     }

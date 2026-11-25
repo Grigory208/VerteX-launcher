@@ -43,6 +43,13 @@ function AppContent() {
     return () => window.removeEventListener('navigate-to-modpacks', handler);
   }, []);
 
+  // Мост ошибок запуска: PlayView → вкладка JARVIS (объяснение ошибки).
+  useEffect(() => {
+    const nav = () => setActiveView('jarvis');
+    window.addEventListener('jarvis-explain-error', nav);
+    return () => window.removeEventListener('jarvis-explain-error', nav);
+  }, []);
+
   return (
     <div className="h-screen w-screen flex bg-launcher-bg text-launcher-text overflow-hidden relative">
       <div className={`flex w-full h-full transition-all duration-300 ${editMode ? 'scale-[0.96] opacity-50 grayscale-[30%]' : ''}`}>
