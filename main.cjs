@@ -11,7 +11,7 @@ const { execSync } = require('child_process');
 
 const { vanilla, fabric, quilt, forge, neoforge } = require('tomate-loaders');
 // ⬇️ ПОДКЛЮЧАЕМ НАШ МЕНЕДЖЕР СКИНОВ ⬇️
-const { applyWideSkin } = require('./skin-manager');
+const { applyWideSkin, packFormatFor } = require('./skin-manager');
 
 app.setName('Vertex Launcher');
 
@@ -67,6 +67,60 @@ function getDiskInfo() {
   }
   return 'Unknown';
 }
+const JARVIS_OLLAMA_URL = 'http://localhost:11434/api/chat';
+const JARVIS_OLLAMA_MODEL = 'qwen2.5:0.5b-instruct';
+const JARVIS_SYSTEM_PROMPT = [
+  'Ты — JARVIS, встроенный текстовый ассистент лаунчера VerteX (Minecraft).',
+  'Отвечай по-русски, кратко и по делу, нейтральным техническим тоном.',
+  'Ты помогаешь: собрать модпак, проверить совместимость модов, найти моды в Modrinth,',
+  'объяснить ошибки запуска игры и подсказать настройки.',
+].join(' ');
+
+async function fetchTimeout(url, options, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...options, signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+}
+
+async function jarvisAskOllama(messages) {
+  const res = await fetchTimeout(JARVIS_OLLAMA_URL, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: JARVIS_OLLAMA_MODEL, messages, stream: false }),
+  }, 120000);
+  if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
+  const data = await res.json();
+  const text = data && data.message && data.message.content;
+  if (!text || !String(text).trim()) throw new Error('Ollama: пустой ответ');
+  return String(text).trim();
+}
+
+async function jarvisAskPollinations(messages) {
+  const res = await fetchTimeout('https://text.pollinations.ai/openai', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'openai-fast', messages, private: true }),
+  }, 120000);
+  if (!res.ok) throw new Error(`Pollinations HTTP ${res.status}`);
+  const data = await res.json();
+  const text = data && data.choices && data.choices[0] &&
+    data.choices[0].message && data.choices[0].message.content;
+  if (!text || !String(text).trim()) throw new Error('Pollinations: пустой ответ');
+  return String(text).trim();
+}
+
+ipcMain.handle('jarvis-chat', async (event, messages) => {
+  const chat = [{ role: 'system', content: JARVIS_SYSTEM_PROMPT }]
+    .concat(Array.isArray(messages) ? messages : []);
+  try { return await jarvisAskOllama(chat); }
+  catch (ollamaErr) {
+    try { return await jarvisAskPollinations(chat); }
+    catch (e) {
+      throw new Error('Мозг недоступен: Ollama (' + ollamaErr.message + '), Pollinations тоже не ответил. ' +
+        'Проверь интернет или запусти Ollama: ollama serve');
+    }
+  }
+});
+
 ipcMain.handle('get-hardware-info', () => ({ cpu: getCpuInfo(), ram: getRamInfo(), disk: getDiskInfo(), gpu: 'Auto-detected GPU' }));
 
 function getOfflineUUID(username) {
@@ -90,26 +144,6 @@ function downloadFile(url, dest) {
       file.on('finish', () => { file.close(); resolve(); });
     }).on('error', (err) => { fs.unlink(dest, () => {}); reject(err); });
   });
-}
-
-async function ensureAuthlibInjector() {
-  const resourcesDir = path.join(__dirname, 'resources');
-  if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true });
-  
-  const authlibPath = path.join(resourcesDir, 'authlib-injector-1.2.8.jar');
-  if (fs.existsSync(authlibPath)) return authlibPath;
-
-  console.log('[BACKEND] Скачиваем authlib-injector 1.2.8...');
-  const downloadUrl = 'https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.8/authlib-injector-1.2.8.jar';
-  
-  try {
-    await downloadFile(downloadUrl, authlibPath);
-    console.log('[BACKEND] ✅ authlib-injector успешно скачан.');
-    return authlibPath;
-  } catch (e) {
-    console.error('[BACKEND] ❌ Ошибка скачивания authlib-injector:', e.message);
-    return null;
-  }
 }
 
 function copyFolderSync(from, to) {
@@ -209,7 +243,6 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
   try {
     console.log(`\n[BACKEND] Подготовка загрузчика: ${loader} для версии ${version} в ${gameDirectory}...`);
 
-    const authlibPath = await ensureAuthlibInjector();
 
     const configFromTomate = await loaderModule.getMCLCLaunchConfig({ gameVersion: version, rootPath: gameDirectory });
     let finalVersion = configFromTomate.version;
@@ -278,45 +311,21 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
 
     const guestUUID = getOfflineUUID(username);
 
-    // ⬇️ НОВЫЙ БЛОК: ЗАПРОС JSON С СЕРВЕРА И СКАЧИВАНИЕ КАРТИНКИ ⬇️
+    // Скин: локальный (Supabase, user skins / deep-link) через args.skinUrl.
+    // Vercel-skin-server удален: отдавал фейковые текстуры ("texture/...").
     const tempSkinPath = path.join(app.getPath('temp'), `${username}_skin.png`);
-    try {
-        const skinApiUrl = `https://express-js-on-vercel-main.layero.app/api/skin/${username}`; // Твой API
-        
-        console.log(`[BACKEND] Запрос данных скина для ${username}...`);
-        
-        // Делаем запрос к твоему серверу
-        const apiResponse = await fetch(skinApiUrl);
-        if (!apiResponse.ok) throw new Error(`Сервер вернул статус ${apiResponse.status}`);
-        
-        const skinData = await apiResponse.json();
-        
-        // ⚠️ ВАЖНО: Здесь нужно заменить 'skinUrl' на то поле, которое возвращает твой сервер!
-        // Например, если сервер отдает { "url": "..." }, то напиши skinData.url
-        const actualSkinUrl = skinData.skinUrl || skinData.url || skinData.skin; 
-
-        if (actualSkinUrl) {
-            console.log(`[BACKEND] Скачивание картинки скина с ${actualSkinUrl}...`);
-            await downloadFile(actualSkinUrl, tempSkinPath);
-            
-            let packFormat = 15;
-            if (version.startsWith('1.21')) packFormat = 34;
-            else if (version.startsWith('1.20.2') || version.startsWith('1.20.3') || version.startsWith('1.20.4')) packFormat = 18;
-            
-            applyWideSkin(gameDirectory, tempSkinPath, packFormat);
-            console.log(`[BACKEND] ✅ Ресурспак со скином сгенерирован.`);
-        } else {
-            console.warn(`[BACKEND] ⚠️ В JSON не найдено поле со ссылкой на скин:`, skinData);
+    const skinUrlArg = args.skinUrl;
+    if (skinUrlArg) {
+        try {
+            console.log(`[BACKEND] Применение скина из ${skinUrlArg}...`);
+            await downloadFile(skinUrlArg, tempSkinPath);
+            applyWideSkin(gameDirectory, tempSkinPath, packFormatFor(version));
+            console.log('[BACKEND] ✅ Ресурсупаковка со скином сгенерирована и включена.');
+        } catch (skinError) {
+            console.error('[BACKEND] ❌ Не удалось применить скин:', skinError.message);
         }
-    } catch (skinError) {
-        console.error(`[BACKEND] ❌ Не удалось получить скин (возможно, его нет в базе):`, skinError.message);
     }
     // ⬆️ КОНЕЦ НОВОГО БЛОКА ⬆️
-
-    let skinArgs = [];
-    if (authlibPath) {
-      skinArgs.push(`-javaagent:${authlibPath}=https://express-js-on-vercel-main.layero.app`);
-    }
 
     const launchConfig = {
       version: finalVersion,
@@ -331,7 +340,6 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
         ...(javaArgs ? javaArgs.split(' ').filter(Boolean) : []),
         ...(importedPackName ? ['--gameDir', launchDir] : []),
         ...(args._customJvmArgs || []),
-        ...skinArgs
       ],
     };
 
@@ -399,12 +407,12 @@ ipcMain.handle('install-custom-modpack', async (event, { mods, mcVersion, loader
   } catch (err) { return { success: false, error: err.message }; }
 });
 
-ipcMain.handle('apply-skin', async (event, { skinUrl, username, gamePath }) => {
+ipcMain.handle('apply-skin', async (event, { skinUrl, username, gamePath, mcVersion }) => {
   const gameDirectory = getGameDirectory(gamePath);
   const tempPath = path.join(app.getPath('temp'), `${username}_manual_skin.png`);
   try {
       await downloadFile(skinUrl, tempPath);
-      applyWideSkin(gameDirectory, tempPath, 15);
+      applyWideSkin(gameDirectory, tempPath, packFormatFor(mcVersion));
       return { success: true };
   } catch (e) {
       return { success: false, error: e.message };

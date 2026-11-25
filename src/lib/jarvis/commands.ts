@@ -15,15 +15,19 @@ const LOADERS = ['fabric', 'forge', 'neoforge'];
 
 function normalizeLoader(word?: string): string | undefined {
   if (!word) return undefined;
-  const w = word.toLowerCase().replace(/[^a-z]/g, '');
-  if (w === 'fabric') return 'fabric';
+  const t = word.toLowerCase();
+  if (t.startsWith('фордж')) return 'forge';
+  if (t.startsWith('неофордж')) return 'neoforge';
+  if (t.startsWith('фабр')) return 'fabric';
+  const w = t.replace(/[^a-z]/g, '');
+  if (w === 'fabric' || /^фабр|fabr/.test(w)) return 'fabric';
   if (w === 'forge') return 'forge';
   if (w === 'neoforge' || w === 'neo') return 'neoforge';
   return undefined;
 }
 
 function extractLoader(text: string): string | undefined {
-  const m = text.match(/\b(fabric|forge|neo ?forge)\b/i);
+  const m = text.match(/\b(fabric|фабрик\S*|forge|фордж|neo ?forge|неофордж)\b/i);
   return normalizeLoader(m?.[1]);
 }
 
@@ -39,7 +43,7 @@ export function parseCommand(text: string): JarvisIntent {
   const mcVersion = extractMcVersion(text);
 
   // Собери/создай сборку ... (моды после ":", "," или "мод(ы)")
-  const buildMatch = t.match(/(?:собери|создай|сделай|сгенерируй)\s+(?: мне)?(?:сборку|модпак|пак)/);
+  const buildMatch = t.match(/(?:собери|создай|сделай|сгенерируй)\s+(?: мне)?(?:сборк\S*|модпак\S*|пак\S*|клиент\S*)/);
   if (buildMatch) {
     const after = text.slice((buildMatch.index ?? 0) + buildMatch[0].length);
     const namesRaw =

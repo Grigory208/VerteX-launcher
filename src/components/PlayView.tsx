@@ -324,6 +324,20 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
       if (mcVersion.startsWith('1.12') || mcVersion.startsWith('1.16')) loaderVersionToPass = '0.15.11';
     }
 
+    // Активный скин игрока из Supabase -> в запуск (ресурсупаковка собирается в main.cjs)
+    let skinUrl: string | undefined = undefined;
+    if (auth.session) {
+      try {
+        const { data: skinRow } = await supabase
+          .from('skins')
+          .select('skin_url')
+          .eq('user_id', auth.session.user.id)
+          .eq('active', true)
+          .maybeSingle();
+        skinUrl = skinRow?.skin_url ?? undefined;
+      } catch { /* нет скина — игра стартует с дефолтным */ }
+    }
+
     const settings = readLauncherSettings();
     const api = (window as any).electronAPI;
 
@@ -341,7 +355,8 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
         loader: currentLoader, loaderVersion: loaderVersionToPass,
         javaPath: settings.javaPath, javaArgs: selectedModpack ? packJavaArgs : settings.javaArgs,
         gamePath: settings.gamePath,
-        importedPackName: importedPackName
+        importedPackName: importedPackName,
+        skinUrl: skinUrl
       });
 
       if (result.success) {
