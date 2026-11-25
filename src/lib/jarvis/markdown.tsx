@@ -47,6 +47,36 @@ function inline(text: string, keyBase: string): ReactNode[] {
 
 export function Markdown({ text }: { text: string }) {
   const out: ReactNode[] = [];
+  // Fenced-блоки ``` — рендерим как <pre> без inline-обработки (код агента).
+  const segments: { code: boolean; body: string }[] = [];
+  const fenceParts = text.replace(/\r/g, '').split(/```[a-zA-Z0-9]*\n?/);
+  fenceParts.forEach((part, idx) => {
+    if (idx > 0 || fenceParts.length > 1) {
+      // нечётные куски внутри фенсов — код; границы нечётности по количеству фенсов
+      segments.push({ code: idx % 2 === 1, body: part.replace(/\n$/, '') });
+    } else {
+      segments.push({ code: false, body: part });
+    }
+  });
+  segments.forEach((seg, si) => {
+    if (seg.code) {
+      out.push(
+        <pre
+          key={`code${si}`}
+          className="my-1.5 px-3 py-2 rounded-lg bg-launcher-elevated border border-launcher-border text-[0.85em] leading-5 overflow-x-auto whitespace-pre"
+        >
+          {seg.body}
+        </pre>,
+      );
+    } else if (seg.body) {
+      out.push(<MarkdownPlain key={`md${si}`} text={seg.body} />);
+    }
+  });
+  return <span>{out}</span>;
+}
+
+function MarkdownPlain({ text }: { text: string }) {
+  const out: ReactNode[] = [];
   const lines = text.replace(/\r/g, '').split('\n');
   let list: ReactNode[] = [];
   const flushList = (key: string) => {
@@ -86,3 +116,4 @@ export function Markdown({ text }: { text: string }) {
   flushList('u-end');
   return <span>{out}</span>;
 }
+

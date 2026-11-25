@@ -61,7 +61,19 @@ export function findVersion(versions: ModrinthVer[], versionId: string): Modrint
   return versions.find((v) => v.id === versionId);
 }
 
-/** Самая свежая версия проекта под (mcVersion, loader). */
+/** Самая свежая версия проекта под (mcVersion, loader), предпочитаем стабильные релизы. */
 export function pickLatestVersion(versions: ModrinthVer[], mcVersion: string, loader: string): ModrinthVer | undefined {
-  return versions.find((v) => v.loaders.includes(loader) && v.game_versions.includes(mcVersion));
+  const matching = versions.filter((v) => v.loaders.includes(loader) && v.game_versions.includes(mcVersion));
+  // Модриант отдаёт по свежести, но свежее может оказаться beta/alpha — сперва ищем release.
+  return matching.find((v) => v.version_type === 'release') ?? matching[0];
+}
+
+/** Метаданные проекта по id или slug. */
+export async function getProject(projectId: string): Promise<ModrinthHit | undefined> {
+  try {
+    const data = (await modrinth(`project/${projectId}`)) as ModrinthHit;
+    return data && data.project_id ? data : undefined;
+  } catch {
+    return undefined;
+  }
 }

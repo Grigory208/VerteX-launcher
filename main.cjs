@@ -74,6 +74,8 @@ const JARVIS_SYSTEM_PROMPT = [
   'Отвечай по-русски, кратко и по делу, нейтральным техническим тоном.',
   'Ты помогаешь: собрать модпак, проверить совместимость модов, найти моды в Modrinth,',
   'объяснить ошибки запуска игры и подсказать настройки.',
+  'Также умеешь писать моды: команда «создай мод <название>» создаёт каркас Fabric-мода (Java + Gradle + fabric.mod.json) в папке jarvis-mods.',
+  'Когда просишь написать код для мода — выдавай Java/Kotlin код в markdown-блоках ``` и объясняй, в какой файл положить.',
 ].join(' ');
 
 async function fetchTimeout(url, options, ms) {
@@ -108,16 +110,271 @@ async function jarvisAskPollinations(messages) {
   return String(text).trim();
 }
 
+async function jarvisAskPollinationsText(messages) {
+  // Тот же Pollinations, но другой маршрут: POST text-эндпойнт, ответ — обычный текст, не JSON.
+  const res = await fetchTimeout('https://text.pollinations.ai/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'openai-fast', messages, private: true }),
+  }, 120000);
+  if (!res.ok) throw new Error(`Pollinations-Text HTTP ${res.status}`);
+  const text = await res.text();
+  if (!text || !String(text).trim() || /^\s*\{\s*\}\s*$/.test(text)) throw new Error('Pollinations-Text: пустой ответ');
+  return String(text).trim();
+}
+
+async function jarvisAskDuckDuckGo(messages) {
+  // DuckDuckGo AI Chat — без ключей. Двухшаговый: status -> x-vqd-4 -> chat (SSE).
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const st = await fetchTimeout('https://duckduckgo.com/duckchat/v1/status', {
+    headers: { 'x-vqd-accept': '1', 'User-Agent': UA },
+  }, 20000);
+  const vqd = st.headers.get('x-vqd-4') || st.headers.get('x-vqd');
+  if (!vqd) throw new Error('DDG: не выдан x-vqd-4 токен');
+  const res = await fetchTimeout('https://duckduckgo.com/duckchat/v1/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', 'x-vqd-4': vqd, 'User-Agent': UA,
+      'Accept': 'text/event-stream', 'x-vqd-hash-1': '1',
+    },
+    body: JSON.stringify({ model: 'llama-3.3-70b', messages, stream: true }),
+  }, 120000);
+  if (!res.ok) throw new Error(`DDG HTTP ${res.status}`);
+  const raw = await res.text();
+  let text = '';
+  for (const line of raw.split('\n')) {
+    const trim = line.trim();
+    if (!trim.startsWith('data:')) continue;
+    const payload = trim.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const j = JSON.parse(payload);
+      if (typeof j.message === 'string') text += j.message;
+    } catch (_) { /* мусорная строка SSE — пропускаем */ }
+  }
+  if (!text.trim()) throw new Error('DDG: пустой ответ');
+  return text.trim();
+}
+
+async function jarvisAskHackClub(messages) {
+  // ai.hackclub.com — бесплатный OpenAI-совместимый шлюз без ключей.
+  const res = await fetchTimeout('https://ai.hackclub.com/chat/completions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  }, 120000);
+  if (!res.ok) throw new Error(`HackClub HTTP ${res.status}`);
+  const data = await res.json();
+  const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (!text || !String(text).trim()) throw new Error('HackClub: пустой ответ');
+  return String(text).trim();
+}
+
 ipcMain.handle('jarvis-chat', async (event, messages) => {
   const chat = [{ role: 'system', content: JARVIS_SYSTEM_PROMPT }]
     .concat(Array.isArray(messages) ? messages : []);
-  try { return await jarvisAskOllama(chat); }
-  catch (ollamaErr) {
-    try { return await jarvisAskPollinations(chat); }
-    catch (e) {
-      throw new Error('Мозг недоступен: Ollama (' + ollamaErr.message + '), Pollinations тоже не ответил. ' +
-        'Проверь интернет или запусти Ollama: ollama serve');
+  const chain = [
+    ['Ollama', () => jarvisAskOllama(chat)],
+    ['Pollinations', () => jarvisAskPollinations(chat)],
+    ['Pollinations-Text', () => jarvisAskPollinationsText(chat)],
+    ['DuckDuckGo', () => jarvisAskDuckDuckGo(chat)],
+    ['HackClub', () => jarvisAskHackClub(chat)],
+  ];
+  const errors = [];
+  for (const [label, ask] of chain) {
+    try { return await ask(); }
+    catch (e) { errors.push(`${label}: ${e.message}`); }
+  }
+  throw new Error('Мозг недоступен (' + errors.join('; ') + '). ' +
+    'Проверь интернет или запусти Ollama: ollama serve');
+});
+
+// ============================== JARVIS: каркас мода ==============================
+// Команда «создай мод <название>» — агент генерирует готовый к сборке Fabric-проект
+// (Gradle + fabric.mod.json + Java-входная точка) в <gamePath>/jarvis-mods/<modid>.
+function httpsJson(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = https.get(url, { timeout: timeoutMs || 10000 }, (res) => {
+        if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+        let raw = '';
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (e) { reject(e); } });
+      });
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.on('error', reject);
+    } catch (e) { reject(e); }
+  });
+}
+
+ipcMain.handle('jarvis-scaffold-mod', async (event, opts) => {
+  try {
+    const name = String((opts && opts.name) || '').trim();
+    const gamePath = String((opts && opts.gamePath) || '').trim();
+    const mcVersion = String((opts && opts.mcVersion) || '1.21.1').trim();
+    if (!gamePath) return { success: false, error: 'Не указан путь к игре (gamePath)' };
+
+    let modid = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'example_mod';
+    if (/^\d/.test(modid)) modid = 'mod_' + modid; // id проекта должен начинаться с буквы
+    const className = modid.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('') || 'ExampleMod';
+    const pkg = 'com.vertex.' + modid;
+    const major = (() => {
+      const m = mcVersion.match(/^1\.(\d+)/);
+      const mm = m ? parseInt(m[1], 10) : 21;
+      if (mm >= 20 && !(mcVersion === '1.20.1' || mcVersion === '1.20.2' || mcVersion === '1.20.3' || mcVersion === '1.20.4')) return 21; // 1.20.5+
+      if (mm >= 18) return 17;
+      return 8;
+    })();
+    const optRelease = major >= 9 ? major : 8;
+
+    // Свежие версии yarn/loader/fabric-api (meta.fabricmc.net / Modrinth), с проверенным fallback.
+    let yarn = mcVersion + '+build.1';
+    let loaderVer = '0.16.14';
+    try {
+      const y = await httpsJson(`https://meta.fabricmc.net/v2/versions/yarn/${encodeURIComponent(mcVersion)}?limit=1`, 10000);
+      if (Array.isArray(y) && y[0] && y[0].version_number) yarn = y[0].version_number;
+    } catch (_) {}
+    try {
+      const l = await httpsJson('https://meta.fabricmc.net/v2/versions/loader?limit=1', 10000);
+      if (Array.isArray(l) && l[0] && l[0].version) loaderVer = l[0].version;
+    } catch (_) {}
+    let fabricApi = '0.116.1+1.21.1';
+    try {
+      const gv = JSON.stringify([mcVersion]);
+      const ld = JSON.stringify(['fabric']);
+      const f = await httpsJson(`https://api.modrinth.com/v2/project/fabric-api/version?game_versions=${encodeURIComponent(gv)}&loaders=${encodeURIComponent(ld)}`, 15000);
+      if (Array.isArray(f) && f[0]) {
+        const rel = f.find((v) => v.version_type === 'release') || f[0];
+        fabricApi = rel.version_number;
+      }
+    } catch (_) {}
+
+    const dir = path.join(gamePath, 'jarvis-mods', modid);
+    const javaDir = path.join(dir, 'src', 'main', 'java', ...pkg.split('.'));
+    fs.mkdirSync(javaDir, { recursive: true });
+    fs.mkdirSync(path.join(dir, 'src', 'main', 'resources'), { recursive: true });
+
+    const files = {};
+
+    files['gradle.properties'] =
+`org.gradle.jvmargs=-Xmx1G
+org.gradle.parallel=true
+
+minecraft_version=${mcVersion}
+yarn_mappings=${yarn}
+loader_version=${loaderVer}
+fabric_version=${fabricApi}
+
+mod_version=1.0.0
+maven_group=${pkg}
+archives_base_name=${modid}
+`;
+
+    files['settings.gradle'] =
+`pluginManagement {
+	repositories {
+		maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+		mavenCentral()
+		gradlePluginPortal()
+	}
+}
+
+rootProject.name = '${modid}'
+`;
+
+    files['build.gradle'] =
+`plugins {
+	id 'fabric-loom' version '1.7-SNAPSHOT'
+	id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:\${project.minecraft_version}"
+	mappings "net.fabricmc:yarn:\${project.yarn_mappings}:v2"
+	modImplementation "net.fabricmc:fabric-loader:\${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"
+}
+
+processResources {
+	inputs.property "version", project.version
+	filesMatching("fabric.mod.json") {
+		expand "version": project.version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = ${optRelease}
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_${major === 8 ? 1 : major}
+	targetCompatibility = JavaVersion.VERSION_${major === 8 ? 1 : major}
+}
+`;
+
+    files[`src/main/resources/fabric.mod.json`] = JSON.stringify({
+      schemaVersion: 1,
+      id: modid,
+      version: '${version}',
+      name: name || modid,
+      description: 'Каркас мода, создан агентом JARVIS в VerteX Launcher',
+      authors: ['Grigory208'],
+      license: 'MIT',
+      environment: '*',
+      entrypoints: { main: [pkg + '.' + className] },
+      depends: {
+        fabricloader: '>=' + loaderVer,
+        fabric: '*',
+        minecraft: '~' + mcVersion,
+        java: '>=' + major,
+      },
+    }, null, 2);
+
+    files[`src/main/java/${pkg.replace(/\./g, '/')}/${className}.java`] =
+`package ${pkg};
+
+import net.fabricmc.api.ModInitializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class ${className} implements ModInitializer {
+	public static final String MOD_ID = "${modid}";
+	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+
+	@Override
+	public void onInitialize() {
+		LOGGER.info("[JARVIS] Мод {} инициализирован!", MOD_ID);
+		// TODO: опиши здесь фичи мода. JARVIS в чате лаунчера подскажет код —
+		// попроси «как сделать <фича> в fabric ${mcVersion}» и он выдаст готовый блок.
+	}
+}
+`;
+
+    for (const [rel, content] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, rel), content, 'utf8');
     }
+
+    console.log(`[JARVIS] Каркас мода создан: ${dir}`);
+    return {
+      success: true,
+      modid,
+      dir,
+      mcVersion,
+      yarn,
+      loaderVer,
+      fabricApi,
+      javaVersion: major,
+      files: Object.keys(files),
+    };
+  } catch (e) {
+    console.error('[JARVIS] Ошибка генерации каркаса мода:', e);
+    return { success: false, error: e.message };
   }
 });
 

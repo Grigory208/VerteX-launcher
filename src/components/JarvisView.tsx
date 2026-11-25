@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useModrinth } from '@/hooks/useModrinth';
 import type { Modpack, ModpackMod, ViewKey } from '@/types';
 import { brainAnswer, type ChatMsg } from '@/lib/jarvis/brain';
-import { parseCommand, findCompatibleMod, type JarvisIntent } from '@/lib/jarvis/commands';
+import { parseCommand, buildWithDeps, type JarvisIntent } from '@/lib/jarvis/commands';
 import { checkPackCompat, compatToText, type CompatReport } from '@/lib/jarvis/compat';
 import { suggestModNames, javaFor } from '@/lib/jarvis/builder';
 import { LAUNCHER_KB, errorExplainPrompt } from '@/lib/jarvis/kb';
@@ -86,16 +86,12 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
       }
     }
     push({ role: 'jarvis', text: `Подбираю версии: ${names.join(', ')} под ${mcVersion} + ${loader}. Java: ${javaFor(mcVersion)}. Лоадер лаунчер поставит сам.` });
-    const mods: ModpackMod[] = [];
-    const fails: string[] = [];
-    for (const name of names) {
-      try {
-        const { mod, problem } = await findCompatibleMod(name, mcVersion, loader);
-        if (mod) mods.push(mod);
-        else if (problem) fails.push(problem);
-      } catch (e) {
-        fails.push(`"${name}": ${(e as Error).message}`);
-      }
+    // Авто-подтягивание required-зависимостей (fabric-api, cloth-config и т.п.) + валидация по Modrinth.
+    const { mods, fails, depAdded } = await buildWithDeps(names, mcVersion, loader, {
+      onProgress: (msg) => push({ role: 'jarvis', text: msg }),
+    });
+    if (depAdded.length) {
+      push({ role: 'jarvis', text: `Добавил required-зависимости: ${[...new Set(depAdded)].join(', ')}.` });
     }
     const rows: string[][] = [
       ...mods.map((m) => [m.title, m.file_name, 'OK']),
@@ -160,6 +156,49 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     onViewChange('play');
   }, [onViewChange]);
 
+  const handleModDev = useCallback(async (query: string) => {
+    const gamePath = readLauncherGamePath();
+    if (!gamePath) {
+      push({
+        role: 'jarvis',
+        text: 'Не знаю, где лежит игра. Сначала укажи путь к игре в настройках лаунчера (⚙ Настройки → «Путь к игре»), потом повтори команду.',
+      });
+      return;
+    }
+    const mcVersion = query.match(/1\.\d{1,2}(?:\.\d{1,2})?/)?.[0] ?? '1.21.1';
+    push({ role: 'jarvis', text: `Генерирую каркас Fabric-мода для ${mcVersion}...` });
+    const api = (window as unknown as { electronAPI?: { jarvisScaffoldMod?: (o: unknown) => Promise<{ success: boolean; error?: string; modid?: string; dir?: string; javaVersion?: number; yarn?: string; loaderVer?: string; fabricApi?: string }> } }).electronAPI;
+    if (!api?.jarvisScaffoldMod) {
+      push({ role: 'jarvis', text: 'Инструмент «создай мод» доступен только в приложении лаунчера (не в браузере).' });
+      return;
+    }
+    const modName = query.replace(/1\.\d{1,2}(?:\.\d{1,2})?/g, '').replace(/под|для|fabric|фабрик/gi, '').trim() || query;
+    const res = await api.jarvisScaffoldMod({ name: modName, gamePath, mcVersion });
+    if (!res.success) {
+      push({ role: 'jarvis', text: `Не получилось: ${res.error}` });
+      return;
+    }
+    push({
+      role: 'jarvis',
+      text:
+        `Каркас мода готов: **${res.modid}** в \`${res.dir}\`\n` +
+        `- stack: Fabric, Minecraft ${mcVersion}, yarn ${res.yarn}, loader ${res.loaderVer}, Fabric API ${res.fabricApi}, Java ${res.javaVersion}\n` +
+        `- файлы: *.java (входная точка), fabric.mod.json, build.gradle, gradle.properties\n\n` +
+        'Что дальше:\n' +
+        '1. Открой папку в IDEA/VS Code (подтянет Gradle).\n' +
+        '2. Опиши логику в классе мода — код генерирую по запросу в чате (блоки ``` вставляй в файлы).\n' +
+        '3. `gradlew build` → jar в `build/libs` — перекинешь в mods/ сборки через лаунчер.',
+    });
+  }, []);
+
+  const readLauncherGamePath = (): string => {
+    try {
+      const s = JSON.parse(localStorage.getItem('vertex-launcher-settings') || '{}');
+      if (s.gamePath) return s.gamePath;
+    } catch { /* нет настроек */ }
+    return '';
+  };
+
   const sendRaw = useCallback(async (text: string) => {
     push({ role: 'user', text });
     setBusy(true);
@@ -169,6 +208,8 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
         await handleBuild(text, intent.mcVersion ?? '1.21.1', intent.loader ?? 'fabric', intent.modNames);
       } else if (intent.kind === 'compat') {
         await handleCompat(intent.packName);
+      } else if (intent.kind === 'moddev') {
+        await handleModDev(intent.query);
       } else if (intent.kind === 'find') {
         await handleFind(intent.query, intent.mcVersion, intent.loader);
       } else if (intent.kind === 'launch') {
@@ -186,7 +227,7 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     } finally {
       setBusy(false);
     }
-  }, [entries, handleBuild, handleCompat, handleFind, handleLaunch]);
+  }, [entries, handleBuild, handleCompat, handleFind, handleLaunch, handleModDev]);
 
   const onSend = () => {
     const t = input.trim();

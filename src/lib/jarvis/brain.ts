@@ -17,6 +17,8 @@ export const JARVIS_SYSTEM = [
   'Ты помогаешь: собрать модпак, проверить совместимость модов, найти моды в Modrinth,',
   'объяснить ошибки запуска игры и подсказать настройки (память, Java, лоадеры).',
   'Модпаки: Fabric/Forge/NeoForge, версии Minecraft 1.16.5+ (основные цели — 1.21.x и 1.20.1).',
+  'Также умеешь писать моды: команда «создай мод <название>» создаёт каркас Fabric-мода (Java + Gradle + fabric.mod.json) в папке jarvis-mods.',
+  'Когда просишь написать код для мода — выдавай Java/Kotlin код в markdown-блоках ``` и объясняй, в какой файл положить.',
   'Если просят собрать сборку — предложи список модов и скажи, что можно создать сборку командой',
   '"собери сборку под 1.21.x fabric: <мод1>, <мод2>".',
 ].join(' ');
@@ -65,7 +67,63 @@ async function askPollinations(messages: ChatMsg[]): Promise<string> {
   return text.trim();
 }
 
-/** Задать вопрос мозгу. Сначала локальная Ollama, при недоступности — Pollinations. */
+async function askPollinationsText(messages: ChatMsg[]): Promise<string> {
+  // Тот же Pollinations, но text-эндпойнт: отвечает обычным текстом, не JSON.
+  const res = await fetchWithTimeout(
+    'https://text.pollinations.ai/',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: POLLINATIONS_MODEL, messages, private: true }),
+    },
+    90_000,
+  );
+  if (!res.ok) throw new Error(`Pollinations-Text HTTP ${res.status}`);
+  const text = await res.text();
+  if (!text.trim() || /^\s*\{\s*\}\s*$/.test(text)) throw new Error('Pollinations-Text: пустой ответ');
+  return text.trim();
+}
+
+async function askDuckDuckGo(messages: ChatMsg[]): Promise<string> {
+  // DuckDuckGo AI Chat — без ключей. Двухшаговый: status -> x-vqd-4 -> chat (SSE).
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const st = await fetchWithTimeout(
+    'https://duckduckgo.com/duckchat/v1/status',
+    { headers: { 'x-vqd-accept': '1', 'User-Agent': UA } },
+    20_000,
+  );
+  const vqd = st.headers.get('x-vqd-4') || st.headers.get('x-vqd');
+  if (!vqd) throw new Error('DDG: не выдан x-vqd-4 токен');
+  const res = await fetchWithTimeout(
+    'https://duckduckgo.com/duckchat/v1/chat',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'x-vqd-4': vqd, 'User-Agent': UA,
+        Accept: 'text/event-stream', 'x-vqd-hash-1': '1',
+      },
+      body: JSON.stringify({ model: 'llama-3.3-70b', messages, stream: true }),
+    },
+    90_000,
+  );
+  if (!res.ok) throw new Error(`DDG HTTP ${res.status}`);
+  const raw = await res.text();
+  let text = '';
+  for (const line of raw.split('\n')) {
+    const trim = line.trim();
+    if (!trim.startsWith('data:')) continue;
+    const payload = trim.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const j = JSON.parse(payload) as { message?: unknown };
+      if (typeof j.message === 'string') text += j.message;
+    } catch { /* мусорная строка SSE — пропускаем */ }
+  }
+  if (!text.trim()) throw new Error('DDG: пустой ответ');
+  return text.trim();
+}
+
+/** Задать вопрос мозгу. Сначала локальная Ollama, при недоступности — облачные резервы. */
 export async function brainAnswer(history: ChatMsg[], extraSystem?: string): Promise<string> {
   const messages: ChatMsg[] = [{ role: 'system', content: JARVIS_SYSTEM }];
   if (extraSystem) messages.push({ role: 'system', content: extraSystem });
@@ -77,16 +135,19 @@ export async function brainAnswer(history: ChatMsg[], extraSystem?: string): Pro
     return await api.jarvisChat(history);
   }
 
-  try {
-    return await askOllama(messages);
-  } catch (ollamaErr) {
+  const chain: [string, () => Promise<string>][] = [
+    ['Ollama', () => askOllama(messages)],
+    ['Pollinations', () => askPollinations(messages)],
+    ['Pollinations-Text', () => askPollinationsText(messages)],
+    ['DuckDuckGo', () => askDuckDuckGo(messages)],
+  ];
+  const errors: string[] = [];
+  for (const [label, ask] of chain) {
     try {
-      return await askPollinations(messages);
-    } catch {
-      throw new Error(
-        `Мозг недоступен: Ollama (${(ollamaErr as Error).message}), Pollinations тоже не ответил. ` +
-        'Проверь интернет или запусти Ollama: ollama serve',
-      );
+      return await ask();
+    } catch (e) {
+      errors.push(`${label}: ${(e as Error).message}`);
     }
   }
+  throw new Error(`Мозг недоступен (${errors.join('; ')}). Проверь интернет или запусти Ollama: ollama serve`);
 }

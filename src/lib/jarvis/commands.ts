@@ -2,11 +2,12 @@
 // всё, что не совпало, уходит в brain.ts (LLM).
 
 import type { ModpackMod } from '@/types';
-import { searchMods, getProjectVersions, pickLatestVersion } from './modrinth';
+import { searchMods, getProjectVersions, pickLatestVersion, getProject } from './modrinth';
 
 export type JarvisIntent =
   | { kind: 'build'; mcVersion?: string; loader?: string; modNames: string[] }
   | { kind: 'compat'; packName?: string }
+  | { kind: 'moddev'; query: string }
   | { kind: 'find'; query: string; mcVersion?: string; loader?: string }
   | { kind: 'launch'; mcVersion?: string }
   | { kind: 'chat' };
@@ -47,6 +48,16 @@ export function parseCommand(text: string): JarvisIntent {
   // или оборота "моды ..."; если их нет — состав предложит мозг (LLM) и всё проверится.
   const hasTrigger = /(?:собери|создай|сделай|сгенерируй|подбери|составь)/.test(t);
   const hasNoun = /(?:сборк|модпак|\bпак\b|клиент)/.test(t);
+  // Создай/сделай/сгенерируй мод <название> — каркас клиентского мода (Fabric).
+  // Важно: \b в JS не дружит с кириллицей, поэтому границы — вручную, а «модпак» вырезаем заранее.
+  const tNoPack = t.replace(/модпак/g, ' ');
+  const modDev = /(?:создай|сделай|сгенерируй|напиши)/.test(t) &&
+    /(^|[^а-яё])мод(ы|а)?($|[^а-яё])/.test(tNoPack);
+  if (modDev && !hasNoun) {
+    const m = text.match(/мод(ы|а)?\s+([^.!?]+)/i);
+    return { kind: 'moddev', query: (m?.[2] ?? '').trim() || text.trim() };
+  }
+
   if (hasTrigger && hasNoun) {
     const colonIdx = text.search(/[:;]/);
     let modNames: string[] = [];
@@ -87,7 +98,7 @@ export async function findCompatibleMod(
   name: string,
   mcVersion: string,
   loader: string,
-): Promise<{ mod?: ModpackMod; problem?: string }> {
+): Promise<{ mod?: ModpackMod; problem?: string; depNames?: string[] }> {
   const hits = await searchMods({ query: name, loader, mcVersion, limit: 3 });
   if (!hits.length) return { problem: `по запросу "${name}" в Modrinth ничего не найдено (${loader} · ${mcVersion})` };
 
@@ -97,6 +108,15 @@ export async function findCompatibleMod(
     if (!ver) continue;
     const file = ver.files.find((f) => f.primary) ?? ver.files[0];
     if (!file) continue;
+    // Required-зависимости (например, fabric-api, cloth-config) — строкой имена проектов,
+    // чтобы сборщик добавил их в сборку автоматически.
+    const depNames: string[] = [];
+    for (const dep of ver.dependencies ?? []) {
+      if (dep.dependency_type !== 'required' || !dep.project_id) continue;
+      if (dep.project_id === hit.project_id) continue;
+      const proj = await getProject(dep.project_id);
+      if (proj?.title) depNames.push(proj.title);
+    }
     return {
       mod: {
         project_id: hit.project_id,
@@ -108,7 +128,57 @@ export async function findCompatibleMod(
         download_url: file.url,
         categories: hit.categories ?? [],
       },
+      depNames,
     };
   }
   return { problem: `"${name}": нет релиза под ${mcVersion} + ${loader}` };
+}
+
+/**
+ * Собрать набор модов с авто-подтягиванием required-зависимостей.
+ * Каждый.dependency тоже проверяется по Modrinth и попадает в таблицу.
+ */
+export async function buildWithDeps(
+  names: string[],
+  mcVersion: string,
+  loader: string,
+  opts: { maxMods?: number; onProgress?: (msg: string) => void } = {},
+): Promise<{ mods: ModpackMod[]; fails: string[]; depAdded: string[] }> {
+  const maxMods = opts.maxMods ?? 30;
+  const mods: ModpackMod[] = [];
+  const fails: string[] = [];
+  const depAdded: string[] = [];
+  const seen = new Set<string>();
+  const queue = [...names];
+  let processed = 0;
+  while (queue.length) {
+    if (opts.onProgress && processed > 0 && processed % 5 === 0) {
+      opts.onProgress(`Проверено модов: ${processed}...`);
+    }
+    if (++processed > maxMods + 10) break;
+    const name = queue.shift()!.trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      const r = await findCompatibleMod(name, mcVersion, loader);
+      if (r.mod) {
+        mods.push(r.mod);
+        for (const dep of r.depNames ?? []) {
+          const dk = dep.toLowerCase();
+          if (!seen.has(dk)) {
+            seen.add(dk);
+            depAdded.push(dep);
+            queue.push(dep);
+          }
+        }
+      } else if (r.problem) {
+        fails.push(r.problem);
+      }
+    } catch (e) {
+      fails.push(`"${name}": ${(e as Error).message}`);
+    }
+  }
+  return { mods, fails, depAdded };
 }

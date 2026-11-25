@@ -51,9 +51,19 @@ function applyWideSkin(gameDir, skinPath, packFormat) {
         const zip = new AdmZip();
         zip.addFile('pack.mcmeta', Buffer.from(JSON.stringify(packMeta, null, 2), 'utf8'));
 
-        // С 1.19.3 скины игрока лежат textures/entity/player/{wide|slim}/steve.png
-        zip.addLocalFile(skinPath, 'assets/minecraft/textures/entity/player/wide', 'steve.png');
-        zip.addLocalFile(skinPath, 'assets/minecraft/textures/entity/player/slim', 'steve.png');
+        // С 1.19.3 скины игрока лежат textures/entity/player/{wide|slim}/{steve|alex}.png.
+        // Какой из них отрендерится — решает хэш UUID (DefaultPlayerSkin), поэтому
+        // переопределяем ВСЕ 4 комбинации, иначе у половины юзеров скин не применится.
+        for (const dir of ['wide', 'slim']) {
+          for (const name of ['steve', 'alex']) {
+            zip.addLocalFile(skinPath, `assets/minecraft/textures/entity/player/${dir}`, `${name}.png`);
+          }
+        }
+        // До 1.19.3 скины лежали в textures/entity/{steve|alex}.png — добавляем и туда,
+        // лишние пути новые версии просто игнорируют.
+        for (const name of ['steve', 'alex']) {
+          zip.addLocalFile(skinPath, 'assets/minecraft/textures/entity', `${name}.png`);
+        }
 
         const packName = 'MyLocalSkin.zip';
         const packsDir = path.join(gameDir, 'resourcepacks');
