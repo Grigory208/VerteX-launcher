@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { SkinModal } from '@/components/SkinModal';
+import { ResetPasswordModal } from '@/components/ResetPasswordModal';
 import {
   Gamepad2,
   LayoutGrid,
@@ -16,7 +18,7 @@ import {
   Boxes,
   Layers,
   Shirt,
-  Menu,
+  KeyRound,
 } from 'lucide-react';
 import type { ViewKey } from '@/types';
 
@@ -36,8 +38,12 @@ export function Sidebar({ activeView, onViewChange, auth, mobileOpen, onMobileCl
   const [username, setUsername] = useState('');
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  
+  // Состояния для OTP кода
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  
   const nicknameRef = useRef<HTMLInputElement>(null);
-
   const [showSkinModal, setShowSkinModal] = useState(false);
 
   const displayName = auth.session ? (auth.profile?.username ?? 'Игрок') : 'Гость';
@@ -60,8 +66,14 @@ export function Sidebar({ activeView, onViewChange, auth, mobileOpen, onMobileCl
     setAuthLoading(true);
     setAuthError('');
     const { error } = await auth.signIn(email, password);
+    
     if (error) {
-      setAuthError(error.message);
+      if (error.message.includes('Email not confirmed') || error.message.includes('not confirmed')) {
+        setShowOtpInput(true);
+        setAuthError('Пожалуйста, подтвердите почту. Мы отправили вам код.');
+      } else {
+        setAuthError(error.message);
+      }
     } else {
       setShowAuthModal(false);
       setEmail('');
@@ -79,15 +91,62 @@ export function Sidebar({ activeView, onViewChange, auth, mobileOpen, onMobileCl
       return;
     }
     const { error } = await auth.signUp(email, password, username.trim());
+    
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      // Показываем окно ввода OTP
+      setShowOtpInput(true);
+      setAuthError('');
+    }
+    setAuthLoading(false);
+  };
+
+  const handleVerifyOtp = async () => {
+    if (otpCode.length < 6) {
+      setAuthError('Введите 6-значный код из письма');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token: otpCode,
+      type: 'signup',
+    });
+
     if (error) {
       setAuthError(error.message);
     } else {
       setShowAuthModal(false);
+      setShowOtpInput(false);
       setEmail('');
       setPassword('');
       setUsername('');
+      setOtpCode('');
     }
     setAuthLoading(false);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setAuthError('Введите Email, чтобы мы знали, куда отправить письмо.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+    
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'vertex-launcher://reset-password',
+    });
+    
+    setAuthLoading(false);
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      alert('Письмо для сброса пароля отправлено! Проверьте почту.');
+    }
   };
 
   const navItems: { key: ViewKey; label: string; icon: typeof Gamepad2 }[] = [
@@ -108,9 +167,17 @@ export function Sidebar({ activeView, onViewChange, auth, mobileOpen, onMobileCl
     onMobileClose();
   };
 
+  const closeAuthModal = () => {
+    setShowAuthModal(false);
+    setTimeout(() => {
+      setShowOtpInput(false);
+      setAuthError('');
+      setOtpCode('');
+    }, 300);
+  };
+
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden animate-fade-in" onClick={onMobileClose} />
       )}
@@ -216,100 +283,158 @@ export function Sidebar({ activeView, onViewChange, auth, mobileOpen, onMobileCl
       </aside>
 
       {showAuthModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowAuthModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in" onClick={closeAuthModal}>
           <div className="w-full max-w-md bg-launcher-surface border border-launcher-border rounded-2xl p-8 animate-slide-up" onClick={(e) => e.stopPropagation()}>
+            
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-launcher-text font-display">
-                {authMode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+                {showOtpInput ? 'Подтверждение' : (authMode === 'login' ? 'Вход в аккаунт' : 'Регистрация')}
               </h2>
-              <button onClick={() => setShowAuthModal(false)} className="text-launcher-muted hover:text-launcher-text transition-colors">
+              <button onClick={closeAuthModal} className="text-launcher-muted hover:text-launcher-text transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex gap-2 mb-6 p-1 bg-launcher-bg rounded-lg">
-              <button
-                onClick={() => { setAuthMode('login'); setAuthError(''); }}
-                className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${authMode === 'login' ? 'bg-launcher-primary text-launcher-bg' : 'text-launcher-muted'}`}
-              >
-                Вход
-              </button>
-              <button
-                onClick={() => { setAuthMode('register'); setAuthError(''); }}
-                className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${authMode === 'register' ? 'bg-launcher-primary text-launcher-bg' : 'text-launcher-muted'}`}
-              >
-                Регистрация
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {authMode === 'register' && (
+            {showOtpInput ? (
+              <div className="space-y-4">
+                <p className="text-sm text-launcher-muted">
+                  Мы отправили 6-значный код на почту <span className="text-launcher-text font-bold">{email}</span>. 
+                  Введите его ниже:
+                </p>
                 <div>
-                  <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Никнейм</label>
-                  <div className="relative">
-                    <input
-                      ref={nicknameRef}
-                      type="text"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
-                      placeholder="Steve_Player"
-                    />
-                    <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-launcher-muted" />
+                  <input
+                    type="text"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onKeyDown={(e) => e.key === 'Enter' && handleVerifyOtp()}
+                    className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-3 text-center text-2xl font-mono tracking-widest text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
+                    placeholder="000000"
+                  />
+                </div>
+                {authError && (
+                  <div className="text-sm text-launcher-danger bg-launcher-danger/10 rounded-lg px-4 py-2.5">
+                    {authError}
                   </div>
-                  <p className="text-[10px] text-launcher-muted mt-1">Никнейм привязан к аккаунту и не может быть изменён вручную</p>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
-                  placeholder="player@example.com"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Пароль</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (authMode === 'login' ? handleSignIn() : handleSignUp())}
-                  className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
-                  placeholder="••••••••"
-                />
-              </div>
-
-              {authError && (
-                <div className="text-sm text-launcher-danger bg-launcher-danger/10 rounded-lg px-4 py-2.5">
-                  {authError}
-                </div>
-              )}
-
-              <button
-                onClick={authMode === 'login' ? handleSignIn : handleSignUp}
-                disabled={authLoading || !email || !password}
-                className="w-full py-2.5 rounded-lg bg-launcher-primary text-launcher-bg font-bold text-sm hover:bg-launcher-primary-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {authLoading ? (
-                  <div className="w-5 h-5 border-2 border-launcher-bg/30 border-t-launcher-bg rounded-full animate-spin" />
-                ) : authMode === 'login' ? (
-                  <><LogIn className="w-4 h-4" /> Войти</>
-                ) : (
-                  <><UserPlus className="w-4 h-4" /> Создать аккаунт</>
                 )}
-              </button>
-            </div>
+                <button
+                  onClick={handleVerifyOtp}
+                  disabled={authLoading || otpCode.length < 6}
+                  className="w-full py-2.5 rounded-lg bg-launcher-primary text-launcher-bg font-bold text-sm hover:bg-launcher-primary-dim disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
+                >
+                  {authLoading ? (
+                    <div className="w-5 h-5 border-2 border-launcher-bg/30 border-t-launcher-bg rounded-full animate-spin" />
+                  ) : (
+                    <><KeyRound className="w-4 h-4" /> Подтвердить</>
+                  )}
+                </button>
+                <button 
+                  onClick={() => setShowOtpInput(false)} 
+                  className="w-full text-xs text-launcher-muted hover:text-launcher-text mt-2 text-center"
+                >
+                  Назад к вводу пароля
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2 mb-6 p-1 bg-launcher-bg rounded-lg">
+                  <button
+                    onClick={() => { setAuthMode('login'); setAuthError(''); }}
+                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${authMode === 'login' ? 'bg-launcher-primary text-launcher-bg' : 'text-launcher-muted'}`}
+                  >
+                    Вход
+                  </button>
+                  <button
+                    onClick={() => { setAuthMode('register'); setAuthError(''); }}
+                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${authMode === 'register' ? 'bg-launcher-primary text-launcher-bg' : 'text-launcher-muted'}`}
+                  >
+                    Регистрация
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {authMode === 'register' && (
+                    <div>
+                      <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Никнейм</label>
+                      <div className="relative">
+                        <input
+                          ref={nicknameRef}
+                          type="text"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
+                          className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
+                          placeholder="Steve_Player"
+                        />
+                        <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-launcher-muted" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Email</label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
+                      placeholder="player@example.com"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Пароль</label>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && (authMode === 'login' ? handleSignIn() : handleSignUp())}
+                      className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors"
+                      placeholder="••••••••"
+                    />
+                  </div>
+
+                  {authMode === 'login' && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        className="text-xs text-launcher-primary hover:underline transition-colors"
+                      >
+                        Забыли пароль?
+                      </button>
+                    </div>
+                  )}
+
+                  {authError && (
+                    <div className="text-sm text-launcher-danger bg-launcher-danger/10 rounded-lg px-4 py-2.5">
+                      {authError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={authMode === 'login' ? handleSignIn : handleSignUp}
+                    disabled={authLoading || !email || !password}
+                    className="w-full py-2.5 rounded-lg bg-launcher-primary text-launcher-bg font-bold text-sm hover:bg-launcher-primary-dim disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
+                  >
+                    {authLoading ? (
+                      <div className="w-5 h-5 border-2 border-launcher-bg/30 border-t-launcher-bg rounded-full animate-spin" />
+                    ) : authMode === 'login' ? (
+                      <><LogIn className="w-4 h-4" /> Войти</>
+                    ) : (
+                      <><UserPlus className="w-4 h-4" /> Создать аккаунт</>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
+      
       {showSkinModal && (
         <SkinModal onClose={() => setShowSkinModal(false)} />
       )}
+
+      <ResetPasswordModal />
     </>
   );
 }

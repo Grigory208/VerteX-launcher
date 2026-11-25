@@ -1,24 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { ModrinthSearchResult, ModrinthVersion } from '@/types';
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/modrinth-proxy`;
-
-async function fetchApi(modrinthPath: string, extraParams?: URLSearchParams): Promise<unknown> {
-  const params = new URLSearchParams(extraParams);
-  params.set('path', modrinthPath);
-  const res = await fetch(`${API_BASE}?${params.toString()}`, {
-    headers: {
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-      Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
 export function useModrinth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -35,26 +17,28 @@ export function useModrinth() {
     setError('');
     try {
       const facets: string[][] = [];
-      if (params.projectType) {
-        facets.push([`project_type:${params.projectType}`]);
-      }
-      if (params.loader) {
-        facets.push([`categories:${params.loader}`]);
-      }
-      if (params.mcVersion) {
-        facets.push([`versions:${params.mcVersion}`]);
-      }
+      if (params.projectType) facets.push([`project_type:${params.projectType}`]);
+      if (params.loader) facets.push([`categories:${params.loader}`]);
+      if (params.mcVersion) facets.push([`versions:${params.mcVersion}`]);
 
-      const searchParams = new URLSearchParams();
-      searchParams.set('limit', String(params.limit ?? 20));
-      searchParams.set('offset', String(params.offset ?? 0));
-      if (params.query) searchParams.set('query', params.query);
-      if (facets.length > 0) searchParams.set('facets', JSON.stringify(facets));
+      const query: Record<string, string> = {
+        limit: String(params.limit ?? 20),
+        offset: String(params.offset ?? 0),
+      };
+      
+      if (params.query) query.query = params.query;
+      if (facets.length > 0) query.facets = JSON.stringify(facets);
 
-      const data = await fetchApi('/search', searchParams) as { hits: ModrinthSearchResult[]; total_hits: number };
-      return data;
+      // Вызываем наш бэкенд вместо Supabase!
+      const data = await (window as any).electronAPI.fetchModrinth({
+        endpoint: 'search',
+        query
+      });
+
+      return data as { hits: ModrinthSearchResult[]; total_hits: number };
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
+      const msg = err instanceof Error ? err.message : 'Search failed';
+      setError(msg);
       return { hits: [], total_hits: 0 };
     } finally {
       setLoading(false);
@@ -65,10 +49,15 @@ export function useModrinth() {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchApi(`/project/${projectId}/version`) as ModrinthVersion[];
-      return data;
+      // Вызываем наш бэкенд для получения версий
+      const data = await (window as any).electronAPI.fetchModrinth({
+        endpoint: `project/${projectId}/version`,
+        query: {}
+      });
+      return data as ModrinthVersion[];
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load versions');
+      const msg = err instanceof Error ? err.message : 'Failed to load versions';
+      setError(msg);
       return [];
     } finally {
       setLoading(false);

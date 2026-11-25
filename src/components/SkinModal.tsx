@@ -76,6 +76,7 @@ export function SkinModal({ onClose }: SkinModalProps) {
         skin_url: urlData.publicUrl,
         skin_type: skinType,
         active: true,
+	user_id: userData.user.id
       });
 
       if (insertErr) throw insertErr;

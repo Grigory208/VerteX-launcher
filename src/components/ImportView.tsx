@@ -1,206 +1,163 @@
-import { useState, useCallback } from 'react';
-import {
-  FolderUp,
-  FileArchive,
-  CheckCircle2,
-  XCircle,
-  X,
-  Loader2,
-} from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { FolderUp, Loader2, CheckCircle2, AlertTriangle, Folder, ChevronDown } from 'lucide-react';
 
-type ImportPhase = 'idle' | 'uploading' | 'extracting' | 'configuring' | 'done' | 'error';
+const LOADERS = ['fabric', 'forge', 'quilt', 'neoforge'];
 
 export function ImportView() {
-  const [phase, setPhase] = useState<ImportPhase>('idle');
-  const [progress, setProgress] = useState(0);
-  const [fileName, setFileName] = useState('');
-  const [dragOver, setDragOver] = useState(false);
-  const [intervalId, setIntervalId] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState<any>(null);
 
-  const reset = useCallback(() => {
-    if (intervalId) clearInterval(intervalId);
-    setIntervalId(null);
-    setPhase('idle');
-    setProgress(0);
-    setFileName('');
-  }, [intervalId]);
+  // Состояния для импорта папок
+  const [folderPath, setFolderPath] = useState('');
+  const [folderName, setFolderName] = useState('');
+  const [folderMcVersion, setFolderMcVersion] = useState('1.21.1');
+  const [folderLoader, setFolderLoader] = useState('fabric');
 
-  const simulateImport = useCallback((name: string) => {
-    setFileName(name);
-    setPhase('uploading');
-    setProgress(0);
+  // ⬇️ ДИНАМИЧЕСКИЙ СПИСОК ВЕРСИЙ ⬇️
+  const [mcVersions, setMcVersions] = useState<string[]>([]);
 
-    let current = 0;
-    let currentPhase: ImportPhase = 'uploading';
-    const id = setInterval(() => {
-      current = Math.min(current + 2 + Math.random() * 4, 100);
-
-      if (currentPhase === 'uploading' && current >= 35) {
-        currentPhase = 'extracting';
-        setPhase('extracting');
-      } else if (currentPhase === 'extracting' && current >= 75) {
-        currentPhase = 'configuring';
-        setPhase('configuring');
+  useEffect(() => {
+    const fetchVersions = async () => {
+      try {
+        const api = (window as any).electronAPI;
+        if (api?.fetchMojangVersions) {
+          const data = await api.fetchMojangVersions();
+          const versionIds = data.map((v: any) => v.id);
+          setMcVersions(versionIds);
+        }
+      } catch (e) {
+        console.error('Ошибка загрузки версий:', e);
       }
-
-      setProgress(current);
-
-      if (current >= 100) {
-        clearInterval(id);
-        setIntervalId(null);
-        setPhase('done');
-      }
-    }, 150);
-    setIntervalId(id);
+    };
+    fetchVersions();
   }, []);
 
-  const handleFile = useCallback((file: File) => {
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      setPhase('error');
-      setFileName(file.name);
-      return;
-    }
-    simulateImport(file.name);
-  }, [simulateImport]);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }, [handleFile]);
-
-  const PHASE_LABELS: Record<ImportPhase, string> = {
-    'idle': '',
-    'uploading': 'Загрузка архива...',
-    'extracting': 'Распаковка ZIP...',
-    'configuring': 'Настройка сборки...',
-    'done': 'Импорт завершён!',
-    'error': 'Ошибка: нужен .zip файл',
+  const saveImportedPack = (pack: any) => {
+    const existingStr = localStorage.getItem('vertex-imported-modpacks') || '[]';
+    const existing = JSON.parse(existingStr);
+    existing.push(pack);
+    localStorage.setItem('vertex-imported-modpacks', JSON.stringify(existing));
   };
 
-  const isActive = phase === 'uploading' || phase === 'extracting' || phase === 'configuring';
+  const handleImportZip = async () => {
+    setImporting(true); setError(''); setSuccess(null);
+    try {
+      const settings = JSON.parse(localStorage.getItem('vertex-launcher-settings') || '{}');
+      const result = await (window as any).electronAPI.selectAndImportModpack({ gamePath: settings.gamePath });
+      
+      if (result.canceled) return;
+      if (result.success) { setSuccess(result.pack); saveImportedPack(result.pack); }
+      else setError(result.error);
+    } catch (err: any) {
+      setError(err.message);
+    } finally { setImporting(false); }
+  };
+
+  const chooseFolder = async () => {
+    const electronApi = (window as any).electronAPI;
+    if (!electronApi?.chooseGameFolder) return;
+    const selected = await electronApi.chooseGameFolder();
+    if (selected) {
+      setFolderPath(selected);
+      const name = selected.split(/[\\/]/).pop() || 'ImportedPack';
+      setFolderName(name);
+    }
+  };
+
+  const handleImportFolder = async () => {
+    if (!folderPath || !folderName) {
+      setError('Выберите папку и введите название');
+      return;
+    }
+    setImporting(true); setError(''); setSuccess(null);
+    try {
+      const settings = JSON.parse(localStorage.getItem('vertex-launcher-settings') || '{}');
+      const result = await (window as any).electronAPI.importFolderModpack({
+        sourcePath: folderPath,
+        packName: folderName,
+        mcVersion: folderMcVersion,
+        loader: folderLoader,
+        gamePath: settings.gamePath
+      });
+
+      if (result.success) { setSuccess(result.pack); saveImportedPack(result.pack); setFolderPath(''); }
+      else setError(result.error);
+    } catch (err: any) {
+      setError(err.message);
+    } finally { setImporting(false); }
+  };
 
   return (
-    <div className="p-8 h-full overflow-y-auto scrollbar-thin">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-launcher-text font-display">Импорт сборки</h2>
-        <p className="text-sm text-launcher-muted mt-1">Загрузите готовую сборку из ZIP-архива на вашем компьютере</p>
+    <div className="h-full flex flex-col items-center justify-center p-8 overflow-y-auto scrollbar-thin">
+      <div className="w-20 h-20 rounded-2xl bg-launcher-elevated flex items-center justify-center mb-6">
+        <FolderUp className="w-10 h-10 text-launcher-primary" />
       </div>
+      
+      <h2 className="text-2xl font-bold text-launcher-text font-display mb-2">Импорт сборки</h2>
+      
+      {error && (
+        <div className="mb-6 flex items-center gap-2.5 px-4 py-3 rounded-lg bg-launcher-danger/10 text-launcher-danger border border-launcher-danger/30 max-w-md w-full">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" /><span className="text-sm">{error}</span>
+        </div>
+      )}
 
-      <div className="max-w-2xl">
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => phase === 'idle' && document.getElementById('import-file-input')?.click()}
-          className={`
-            relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer
-            ${dragOver
-              ? 'border-launcher-primary bg-launcher-primary/5 scale-[1.02]'
-              : phase === 'idle'
-              ? 'border-launcher-border hover:border-launcher-primary/50 bg-launcher-surface'
-              : 'border-launcher-border bg-launcher-surface cursor-default'
-            }
-          `}
-        >
-          <input
-            id="import-file-input"
-            type="file"
-            accept=".zip"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-            }}
-          />
+      {success && (
+        <div className="mb-6 p-5 rounded-xl bg-launcher-primary/10 border border-launcher-primary/30 max-w-md w-full animate-fade-in">
+          <div className="flex items-center gap-2 text-launcher-primary mb-2">
+            <CheckCircle2 className="w-5 h-5" /><h3 className="font-bold">Сборка импортирована!</h3>
+          </div>
+          <p className="text-sm text-launcher-text mb-1">Название: <strong>{success.name}</strong></p>
+          <p className="text-xs text-launcher-muted">Ищите её в разделе «Играть» &rarr; «Сборки».</p>
+        </div>
+      )}
 
-          {phase === 'idle' && (
-            <div className="animate-fade-in">
-              <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-launcher-elevated flex items-center justify-center">
-                <FolderUp className="w-10 h-10 text-launcher-primary" />
-              </div>
-              <p className="text-lg font-medium text-launcher-text mb-1">Перетащите ZIP-архив сюда</p>
-              <p className="text-sm text-launcher-muted">или нажмите, чтобы выбрать файл</p>
-              <p className="text-xs text-launcher-muted/60 mt-4">Поддерживаются только .zip архивы</p>
-            </div>
-          )}
-
-          {isActive && (
-            <div className="animate-fade-in">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-launcher-elevated flex items-center justify-center">
-                <Loader2 className="w-8 h-8 text-launcher-primary animate-spin" />
-              </div>
-              <p className="text-lg font-medium text-launcher-text mb-1">{PHASE_LABELS[phase]}</p>
-              <p className="text-sm text-launcher-muted mb-6 truncate">{fileName}</p>
-
-              <div className="max-w-md mx-auto space-y-2">
-                <div className="h-3 bg-launcher-bg rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-launcher-primary to-launcher-accent rounded-full transition-all duration-150 relative"
-                    style={{ width: `${progress}%` }}
-                  >
-                    <div className="absolute inset-0 shimmer-bg" />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-xs text-launcher-muted font-mono">
-                  <span>{PHASE_LABELS[phase]}</span>
-                  <span>{progress.toFixed(0)}%</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {phase === 'done' && (
-            <div className="animate-fade-in">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-launcher-primary/10 flex items-center justify-center">
-                <CheckCircle2 className="w-8 h-8 text-launcher-primary" />
-              </div>
-              <p className="text-lg font-medium text-launcher-text mb-1">Сборка импортирована!</p>
-              <p className="text-sm text-launcher-muted mb-4 truncate">{fileName}</p>
-              <button onClick={reset} className="px-6 py-2.5 rounded-lg bg-launcher-primary text-launcher-bg font-bold text-sm hover:bg-launcher-primary-dim transition-colors">
-                Импортировать ещё
-              </button>
-            </div>
-          )}
-
-          {phase === 'error' && (
-            <div className="animate-fade-in">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-launcher-danger/10 flex items-center justify-center">
-                <XCircle className="w-8 h-8 text-launcher-danger" />
-              </div>
-              <p className="text-lg font-medium text-launcher-text mb-1">Неверный формат</p>
-              <p className="text-sm text-launcher-muted mb-4">Выберите файл с расширением .zip</p>
-              <button onClick={reset} className="px-6 py-2.5 rounded-lg bg-launcher-elevated text-launcher-text font-medium text-sm hover:bg-launcher-border transition-colors">
-                Попробовать снова
-              </button>
-            </div>
-          )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl w-full">
+        {/* Блок 1: Импорт архива */}
+        <div className="bg-launcher-surface border border-launcher-border rounded-xl p-6 flex flex-col">
+          <h3 className="text-lg font-bold text-launcher-text mb-2">Импорт из архива</h3>
+          <p className="text-sm text-launcher-muted mb-6 flex-1">
+            Загрузите готовую сборку в формате <strong className="text-launcher-text">.mrpack</strong> (Modrinth) или <strong className="text-launcher-text">.zip</strong> (CurseForge).
+          </p>
+          <button onClick={handleImportZip} disabled={importing} className="w-full py-3 rounded-lg bg-launcher-primary text-launcher-bg font-bold text-sm hover:bg-launcher-primary-dim transition-colors flex items-center justify-center gap-2">
+            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderUp className="w-4 h-4" />} Выбрать ZIP-файл
+          </button>
         </div>
 
-        <div className="mt-6 bg-launcher-surface border border-launcher-border rounded-xl p-5">
-          <div className="flex items-start gap-3">
-            <FileArchive className="w-5 h-5 text-launcher-muted flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-launcher-text mb-1">Как это работает</p>
-              <ul className="text-xs text-launcher-muted space-y-1.5">
-                <li>• ZIP-архив распаковывается и проверяется на структуру сборки</li>
-                <li>• Моды и конфиги автоматически переносятся в директорию игры</li>
-                <li>• После установки сборка появится в списке на главном экране</li>
-                <li>• Импортированные сборки обновляются только вручную</li>
-              </ul>
+        {/* Блок 2: Импорт папки */}
+        <div className="bg-launcher-surface border border-launcher-border rounded-xl p-6 flex flex-col">
+          <h3 className="text-lg font-bold text-launcher-text mb-2">Импорт из папки</h3>
+          <p className="text-sm text-launcher-muted mb-4">
+            Укажите папку с игрой (например, от TLauncher). Мы скопируем моды и конфиги.
+          </p>
+          
+          <div className="space-y-3 mb-4">
+            <div className="flex gap-2">
+              <input value={folderPath} readOnly placeholder="Путь к папке..." className="flex-1 min-w-0 bg-launcher-bg border border-launcher-border rounded-lg px-3 py-2 text-xs text-launcher-text" />
+              <button onClick={chooseFolder} className="px-3 py-2 rounded-lg bg-launcher-elevated text-xs hover:bg-launcher-border transition-colors"><Folder className="w-4 h-4" /></button>
+            </div>
+            <input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="Название сборки" className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-3 py-2 text-sm text-launcher-text" />
+            
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <select value={folderMcVersion} onChange={(e) => setFolderMcVersion(e.target.value)} className="w-full appearance-none bg-launcher-bg border border-launcher-border rounded-lg pl-3 pr-8 py-2 text-sm text-launcher-text cursor-pointer">
+                  {mcVersions.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-launcher-muted pointer-events-none" />
+              </div>
+              <div className="relative flex-1">
+                <select value={folderLoader} onChange={(e) => setFolderLoader(e.target.value)} className="w-full appearance-none bg-launcher-bg border border-launcher-border rounded-lg pl-3 pr-8 py-2 text-sm text-launcher-text cursor-pointer">
+                  {LOADERS.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-launcher-muted pointer-events-none" />
+              </div>
             </div>
           </div>
-        </div>
 
-        {phase !== 'idle' && (
-          <button
-            onClick={reset}
-            className="mt-4 flex items-center gap-2 text-sm text-launcher-muted hover:text-launcher-text transition-colors"
-          >
-            <X className="w-4 h-4" /> Сбросить
+          <button onClick={handleImportFolder} disabled={importing || !folderPath} className="w-full py-3 rounded-lg bg-launcher-elevated text-launcher-text border border-launcher-border font-bold text-sm hover:bg-launcher-border transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
+            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderUp className="w-4 h-4" />} Импортировать папку
           </button>
-        )}
+        </div>
       </div>
     </div>
   );

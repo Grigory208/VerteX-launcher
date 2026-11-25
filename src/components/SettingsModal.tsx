@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Check, FolderOpen, HardDrive, X, Cpu, MemoryStick } from 'lucide-react';
+import { Check, FolderOpen, HardDrive, X, Cpu, MemoryStick, Trash2, AlertTriangle } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -36,6 +37,12 @@ function readSettings(): LauncherSettings {
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<LauncherSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
+  
+  // Состояния для удаления аккаунта
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleteText, setDeleteText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const electronApi = window.electronAPI;
 
   useEffect(() => {
@@ -58,6 +65,25 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     if (selectedPath) setSettings((current) => ({ ...current, gamePath: selectedPath }));
   };
 
+  const handleDeleteAccount = async () => {
+    if (deleteText !== 'УДАЛИТЬ') return;
+    
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase.rpc('delete_user');
+      
+      if (error) throw error;
+      
+      alert('Аккаунт успешно удален. До свидания!');
+      await supabase.auth.signOut();
+      window.location.reload(); // Перезагружаем лаунчер
+    } catch (err: any) {
+      alert(`Ошибка удаления: ${err.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[calc(100vh-48px)] overflow-y-auto scrollbar-thin bg-launcher-surface border border-launcher-border rounded-2xl shadow-2xl" onClick={(event) => event.stopPropagation()}>
@@ -72,6 +98,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div className="p-6 space-y-8">
+          {/* Секция с диском */}
           <section>
             <div className="flex items-start gap-3 mb-5">
               <div className="p-2 rounded-lg bg-launcher-primary/10 text-launcher-primary"><HardDrive className="w-5 h-5" /></div>
@@ -81,30 +108,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <input
-                type="range"
-                min="5"
-                max="250"
-                step="1"
-                value={settings.maxStorageGb}
-                onChange={(event) => setSettings((current) => ({ ...current, maxStorageGb: Number(event.target.value) }))}
-                className="flex-1 accent-launcher-primary"
-              />
+              <input type="range" min="5" max="250" step="1" value={settings.maxStorageGb} onChange={(event) => setSettings((current) => ({ ...current, maxStorageGb: Number(event.target.value) }))} className="flex-1 accent-launcher-primary" />
               <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min="5"
-                  max="250"
-                  value={settings.maxStorageGb}
-                  onChange={(event) => setSettings((current) => ({ ...current, maxStorageGb: Math.min(250, Math.max(5, Number(event.target.value) || 5)) }))}
-                  className="w-20 bg-launcher-bg border border-launcher-border rounded-lg px-3 py-2 text-center text-launcher-text focus:border-launcher-primary focus:outline-none"
-                />
+                <input type="number" min="5" max="250" value={settings.maxStorageGb} onChange={(event) => setSettings((current) => ({ ...current, maxStorageGb: Math.min(250, Math.max(5, Number(event.target.value) || 5)) }))} className="w-20 bg-launcher-bg border border-launcher-border rounded-lg px-3 py-2 text-center text-launcher-text focus:border-launcher-primary focus:outline-none" />
                 <span className="text-sm text-launcher-muted">ГБ</span>
               </div>
             </div>
-            <div className="flex justify-between text-[10px] text-launcher-muted mt-2"><span>5 ГБ</span><span>250 ГБ</span></div>
           </section>
 
+          {/* Секция с папкой */}
           <section>
             <div className="flex items-start gap-3 mb-5">
               <div className="p-2 rounded-lg bg-launcher-primary/10 text-launcher-primary"><FolderOpen className="w-5 h-5" /></div>
@@ -119,6 +131,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
           </section>
 
+          {/* Секция Java и памяти */}
           <section>
             <div className="flex items-start gap-3 mb-5">
               <div className="p-2 rounded-lg bg-launcher-primary/10 text-launcher-primary"><Cpu className="w-5 h-5" /></div>
@@ -130,55 +143,69 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Путь к Java</label>
-                <input
-                  type="text"
-                  value={settings.javaPath}
-                  onChange={(event) => setSettings((current) => ({ ...current, javaPath: event.target.value }))}
-                  className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors font-mono"
-                  placeholder="Использовать встроенную Java"
-                />
-                <p className="text-[10px] text-launcher-muted mt-1">Оставьте пустым, чтобы использовать Java из комплекта лаунчера.</p>
+                <input type="text" value={settings.javaPath} onChange={(event) => setSettings((current) => ({ ...current, javaPath: event.target.value }))} className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors font-mono" placeholder="Использовать встроенную Java" />
               </div>
               <div>
-                <label className="flex items-center gap-2 text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">
-                  <MemoryStick className="w-3.5 h-3.5" /> Выделяемая память
-                </label>
+                <label className="flex items-center gap-2 text-xs text-launcher-muted mb-1.5 uppercase tracking-wide"><MemoryStick className="w-3.5 h-3.5" /> Выделяемая память</label>
                 <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="1024"
-                    max="16384"
-                    step="512"
-                    value={settings.memoryMb}
-                    onChange={(event) => setSettings((current) => ({ ...current, memoryMb: Number(event.target.value) }))}
-                    className="flex-1 accent-launcher-primary"
-                  />
+                  <input type="range" min="1024" max="16384" step="512" value={settings.memoryMb} onChange={(event) => setSettings((current) => ({ ...current, memoryMb: Number(event.target.value) }))} className="flex-1 accent-launcher-primary" />
                   <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="1024"
-                      max="16384"
-                      step="512"
-                      value={settings.memoryMb}
-                      onChange={(event) => setSettings((current) => ({ ...current, memoryMb: Math.min(16384, Math.max(1024, Number(event.target.value) || 1024)) }))}
-                      className="w-24 bg-launcher-bg border border-launcher-border rounded-lg px-3 py-2 text-center text-launcher-text focus:border-launcher-primary focus:outline-none"
-                    />
+                    <input type="number" min="1024" max="16384" step="512" value={settings.memoryMb} onChange={(event) => setSettings((current) => ({ ...current, memoryMb: Math.min(16384, Math.max(1024, Number(event.target.value) || 1024)) }))} className="w-24 bg-launcher-bg border border-launcher-border rounded-lg px-3 py-2 text-center text-launcher-text focus:border-launcher-primary focus:outline-none" />
                     <span className="text-sm text-launcher-muted">МБ</span>
                   </div>
                 </div>
-                <div className="flex justify-between text-[10px] text-launcher-muted mt-2"><span>1 ГБ</span><span>16 ГБ</span></div>
               </div>
               <div>
                 <label className="block text-xs text-launcher-muted mb-1.5 uppercase tracking-wide">Доп. JVM аргументы</label>
-                <input
-                  type="text"
-                  value={settings.javaArgs}
-                  onChange={(event) => setSettings((current) => ({ ...current, javaArgs: event.target.value }))}
-                  className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors font-mono"
-                  placeholder="-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions"
-                />
+                <input type="text" value={settings.javaArgs} onChange={(event) => setSettings((current) => ({ ...current, javaArgs: event.target.value }))} className="w-full bg-launcher-bg border border-launcher-border rounded-lg px-4 py-2.5 text-sm text-launcher-text focus:border-launcher-primary focus:outline-none transition-colors font-mono" placeholder="-XX:+UseG1GC" />
               </div>
             </div>
+          </section>
+
+          {/* ОПАСНАЯ ЗОНА (УДАЛЕНИЕ) */}
+          <section className="border border-launcher-danger/30 rounded-xl p-5 bg-launcher-danger/5">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-launcher-danger/20 text-launcher-danger"><AlertTriangle className="w-5 h-5" /></div>
+              <div>
+                <h3 className="font-display font-bold text-launcher-danger">Опасная зона</h3>
+                <p className="text-sm text-launcher-muted mt-1">Удаление аккаунта навсегда сотрет все ваши данные, сборки и скины. Это действие необратимо.</p>
+              </div>
+            </div>
+            
+            {!showDelete ? (
+              <button 
+                onClick={() => setShowDelete(true)}
+                className="w-full py-2.5 rounded-lg border border-launcher-danger text-launcher-danger font-bold text-sm hover:bg-launcher-danger/10 transition-colors flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" /> Удалить аккаунт
+              </button>
+            ) : (
+              <div className="space-y-3 animate-fade-in">
+                <p className="text-sm text-launcher-text font-medium">Для подтверждения напишите слово <span className="font-bold text-launcher-danger select-all">УДАЛИТЬ</span>:</p>
+                <input
+                  type="text"
+                  value={deleteText}
+                  onChange={(e) => setDeleteText(e.target.value)}
+                  className="w-full bg-launcher-bg border border-launcher-danger/50 rounded-lg px-4 py-2 text-sm text-launcher-text focus:border-launcher-danger focus:outline-none font-mono"
+                  placeholder="УДАЛИТЬ"
+                />
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => { setShowDelete(false); setDeleteText(''); }}
+                    className="flex-1 py-2 rounded-lg bg-launcher-elevated text-launcher-text text-sm font-bold hover:bg-launcher-border transition-colors"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={deleteText !== 'УДАЛИТЬ' || isDeleting}
+                    className="flex-1 py-2 rounded-lg bg-launcher-danger text-white text-sm font-bold hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    {isDeleting ? 'Удаление...' : 'Подтвердить'}
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
 
           <div className="flex justify-end pt-2">
