@@ -28,7 +28,7 @@ export interface Profile {
   updated_at: string;
 }
 
-export type ViewKey = 'play' | 'catalog' | 'mods' | 'modpacks' | 'versions' | 'import' | 'admin';
+export type ViewKey = 'play' | 'catalog' | 'mods' | 'modpacks' | 'versions' | 'import' | 'jarvis' | 'admin';
 
 export type SkinType = 'classic' | 'slim';
 

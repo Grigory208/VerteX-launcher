@@ -8,6 +8,7 @@ import { ModpackEditorView } from '@/components/ModpackEditorView';
 import { VersionsView } from '@/components/VersionsView';
 import { ImportView } from '@/components/ImportView';
 import { AdminView } from '@/components/AdminView';
+import { JarvisView } from '@/components/JarvisView';
 import { EditorToolbar } from '@/components/EditorToolbar';
 import { EditToggleButton } from '@/components/EditToggleButton';
 import { EditorOverlay } from '@/components/EditorOverlay';
@@ -67,6 +68,7 @@ function AppContent() {
           {effectiveView === 'modpacks' && <ModpackEditorView />}
           {effectiveView === 'versions' && <VersionsView />}
           {effectiveView === 'import' && <ImportView />}
+          {effectiveView === 'jarvis' && <JarvisView auth={auth} onViewChange={setActiveView} />}
           {effectiveView === 'admin' && auth.isAdmin && <AdminView />}
         </main>
       </div>

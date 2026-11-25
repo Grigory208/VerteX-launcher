@@ -19,6 +19,7 @@ import {
   Layers,
   Shirt,
   KeyRound,
+  Bot,
 } from 'lucide-react';
 import type { ViewKey } from '@/types';
 
@@ -156,6 +157,7 @@ export function Sidebar({ activeView, onViewChange, auth, mobileOpen, onMobileCl
     { key: 'modpacks', label: 'Мои сборки', icon: Boxes },
     { key: 'versions', label: 'Версии MC', icon: Layers },
     { key: 'import', label: 'Импорт сборки', icon: FolderUp },
+    { key: 'jarvis', label: 'JARVIS', icon: Bot },
   ];
 
   if (showAdmin) {
