@@ -15,6 +15,14 @@ interface PlayViewProps {
 
 interface HardwareInfo { cpu: string; ram: string; disk: string; gpu: string; }
 
+/** Возвращает результат промиса до ms мс, иначе null: сеть не должна висеть минуты. */
+function raceTimeout<T>(p: PromiseLike<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(null); });
+  });
+}
+
 const FALLBACK_HARDWARE: HardwareInfo = { cpu: 'Определение...', ram: 'Определение...', disk: 'Определение...', gpu: 'Определение...' };
 const MC_VERSIONS_STORAGE = 'vertex-installed-versions';
 const SETTINGS_KEY = 'vertex-launcher-settings';
@@ -144,14 +152,34 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
   }, [syncWithDisk]);
 
   const fetchData = useCallback(async () => {
+    // Мгновенный старт из локального кеша; сеть (Supabase) догружается в фоне с таймаутом.
+    try {
+      const cachedClients = localStorage.getItem('vertex-clients-cache');
+      const cachedModpacks = localStorage.getItem('vertex-modpacks-cache');
+      if (cachedClients) setClients(JSON.parse(cachedClients));
+      if (cachedModpacks) setModpacks(JSON.parse(cachedModpacks));
+      if (cachedClients || cachedModpacks) setLoading(false);
+    } catch { /* битый кеш — игнорируем */ }
+
     const [clientsRes, modpacksRes] = await Promise.all([
-      supabase.from('clients').select('*').order('created_at', { ascending: false }),
-      supabase.from('modpacks').select('*').order('updated_at', { ascending: false })
+      raceTimeout(supabase.from('clients').select('*').order('created_at', { ascending: false }), 10000),
+      raceTimeout(supabase.from('modpacks').select('*').order('updated_at', { ascending: false }), 10000)
     ]);
+    if (!clientsRes || !modpacksRes) {
+      // Сеть не ответила за 10 с: работаем на кеше, не крутим спиннер.
+      if (!localStorage.getItem('vertex-clients-cache')) setClients([]);
+      if (!localStorage.getItem('vertex-modpacks-cache')) setModpacks([]);
+      setImportedPacks(JSON.parse(localStorage.getItem('vertex-imported-modpacks') || '[]'));
+      setLoading(false);
+      return;
+    }
     
     const clientsList = (clientsRes.data as Client[]) ?? [];
     const modpacksList = (modpacksRes.data as Modpack[]) ?? [];
     const importedList = JSON.parse(localStorage.getItem('vertex-imported-modpacks') || '[]');
+
+    localStorage.setItem('vertex-clients-cache', JSON.stringify(clientsList));
+    localStorage.setItem('vertex-modpacks-cache', JSON.stringify(modpacksList));
     
     setClients(clientsList);
     setModpacks(modpacksList);
