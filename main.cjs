@@ -615,10 +615,9 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
                 const modsDir = path.join(gameDirectory, 'mods');
                 if (!fs.existsSync(modsDir)) fs.mkdirSync(modsDir, { recursive: true });
                 const modDst = path.join(modsDir, 'vertexskinbridge-1.0.0.jar');
-                if (!fs.existsSync(modDst)) {
-                    fs.copyFileSync(modJar, modDst);
-                    console.log('[BACKEND] ✅ VertexSkinBridge установлен в mods/');
-                }
+                // Всегда перезаписываем: обновлённый jar из репо должен попадать в игру.
+                fs.copyFileSync(modJar, modDst);
+                console.log('[BACKEND] ✅ VertexSkinBridge установлен в mods/');
                 const vsDir = path.join(gameDirectory, 'vertex-skin');
                 if (!fs.existsSync(vsDir)) fs.mkdirSync(vsDir, { recursive: true });
                 fs.copyFileSync(tempSkinPath, path.join(vsDir, 'local.png'));
