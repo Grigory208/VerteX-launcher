@@ -1,6 +1,6 @@
 package ru.vertex.skinbridge.mixin;
 
-import net.minecraft.client.network.AbstractClientPlayer;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.client.util.DefaultSkinHelper;
 import net.minecraft.client.util.SkinTextures;
 import org.spongepowered.asm.mixin.Mixin;
@@ -14,12 +14,12 @@ import ru.vertex.skinbridge.Bridge;
  * стандартный скин (DefaultSkinHelper) — тот, который ресурспак лаунчера уже перерисовал
  * нашим PNG. Серверные текстуры профиля (SkinsRestorer и т.п.) для себя игнорируем.
  */
-@Mixin(AbstractClientPlayer.class)
-public abstract class AbstractClientPlayerMixin {
+@Mixin(AbstractClientPlayerEntity.class)
+public abstract class AbstractClientPlayerEntityMixin {
 
     @Inject(method = "getSkinTextures", at = @At("HEAD"), cancellable = true)
     private void vertex$forceLauncherSkin(CallbackInfoReturnable<SkinTextures> cir) {
-        AbstractClientPlayer self = (AbstractClientPlayer) (Object) this;
+        AbstractClientPlayerEntity self = (AbstractClientPlayerEntity) (Object) this;
         if (Bridge.forceDefaultSkin(self)) {
             cir.setReturnValue(DefaultSkinHelper.getSkinTextures(self.getUuid()));
         }

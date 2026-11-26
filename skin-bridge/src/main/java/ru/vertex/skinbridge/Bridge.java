@@ -2,7 +2,7 @@ package ru.vertex.skinbridge;
 
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.AbstractClientPlayer;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,7 +26,7 @@ public final class Bridge {
     private Bridge() { }
 
     /** true — форсим стандартный скин для локального игрока (когда лаунчер положил скин). */
-    public static boolean forceDefaultSkin(AbstractClientPlayer player) {
+    public static boolean forceDefaultSkin(AbstractClientPlayerEntity player) {
         if (player == null || player != MinecraftClient.getInstance().player) {
             return false;
         }
