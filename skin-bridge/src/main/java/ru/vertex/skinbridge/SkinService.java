@@ -147,7 +147,7 @@ public final class SkinService {
                     .registerDynamicTexture("vertexskinbridge", texture);
             SkinTextures.Model model = "slim".equalsIgnoreCase(modelHeader)
                     ? SkinTextures.Model.SLIM
-                    : SkinTextures.Model.CLASSIC;
+                    : SkinTextures.Model.WIDE; // в 1.21.1 константа называется WIDE, а не CLASSIC
             resolved.put(name, new SkinTextures(id, null, null, null, model, false));
             VertexSkinBridgeClient.LOGGER.info("[VertexSkinBridge] скин {} применён ({}).", name, model);
         } catch (Exception e) {
