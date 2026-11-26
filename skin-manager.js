@@ -64,8 +64,12 @@ function applyWideSkin(gameDir, skinPath, packFormat) {
         const info = pngInfo(skinPath);
         const fmt = packFormat || packFormatFor('');
 
-        // pack.mcmeta: точный формат + широкий диапазон supported_formats (1.20.2+)
-        const pack = { pack_format: fmt, description: 'VerteX Local Skin' };
+        // pack.mcmeta: точный формат + широкий диапазон. С 1.21.9 (формат > 64) обязательны
+        // min_format/max_format (иначе игра выкидывает пак: "missing mandatory fields
+        // min_format and max_format");supported_formats нужен только 1.20.2–1.21.8 и
+        // новыми версиями игнорируется, а min/max_format старыми версиями — не читается.
+        // common pack.mcmeta валиден и там, и там. Bare-int = major с любым minor.
+        const pack = { pack_format: fmt, min_format: fmt, max_format: 999, description: 'VerteX Local Skin' };
         if (fmt >= 18) pack.supported_formats = { min_inclusive: fmt, max_inclusive: 999 };
         const packMeta = { pack };
 
