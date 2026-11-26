@@ -189,6 +189,37 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     push({ role: 'jarvis', text: res.success ? `Сохранил: \`${res.path}\`` : `Не сохранил: ${res.error}` });
   }, []);
 
+  const handleApplySkin = useCallback(async (img: NonNullable<ChatEntry['image']>) => {
+    if (!auth.session) {
+      push({ role: 'jarvis', text: 'Чтобы поставить скин, войди в аккаунт (кнопка в сайдбаре) — скин хранится в облаке и активируется при запуске игры.' });
+      return;
+    }
+    try {
+      // dataURL → Blob тем же контрактом, что и вкладка скинов: bucket 'skins', путь <user_id>/<ts>.png.
+      const blob = await (await fetch(img.dataUrl)).blob();
+      const fileName = `${auth.session.user.id}/${Date.now()}.png`;
+      const { error: upErr } = await supabase.storage.from('skins').upload(fileName, blob, { contentType: 'image/png', upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from('skins').getPublicUrl(fileName);
+      await supabase.from('skins').update({ active: false }).eq('user_id', auth.session.user.id);
+      const { error: insErr } = await supabase.from('skins').insert({
+        skin_url: urlData.publicUrl,
+        skin_type: 'classic',
+        active: true,
+        user_id: auth.session.user.id,
+      });
+      if (insErr) throw insErr;
+      push({
+        role: 'jarvis',
+        text:
+          'Скин применён ✅ Теперь просто запусти игру — при старте лаунчер скачает его и пересоберёт ресурспак MyLocalSkin с нужным pack_format под твою версию.\n' +
+          'Нюанс: если на сервере стоит скин-плагин (SkinsRestorer и т.п.), он перекроет ресурспак своим скином — против этого позже будет клиентский мод.',
+      });
+    } catch (e) {
+      push({ role: 'jarvis', text: `Не смог применить скин: ${(e as Error).message}` });
+    }
+  }, [auth.session]);
+
   const handleModDev = useCallback(async (query: string) => {
     const gamePath = readLauncherGamePath();
     if (!gamePath) {
@@ -350,6 +381,9 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
                   />
                   <div className="flex gap-1.5">
                     <button onClick={() => void handleSaveImage(e.image!)} className="px-2 py-1 rounded bg-launcher-accent text-white text-xs">Сохранить PNG</button>
+                    {e.image.kind === 'skin' && (
+                      <button onClick={() => void handleApplySkin(e.image!)} className="px-2 py-1 rounded bg-green-600 text-white text-xs">Поставить как мой скин</button>
+                    )}
                     <button onClick={() => void handlePaint(e.image!.query)} className="px-2 py-1 rounded border border-launcher-border text-xs">Ещё вариант</button>
                   </div>
                 </div>

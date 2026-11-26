@@ -39,8 +39,29 @@ function packFormatFor(mcVersion) {
 /**
  * Создает и включает ресурсупаковку со скином (WIDE / STEVE).
  */
+// Диагностика: проверить, что файл — валидный PNG правильного размера.
+// Игра молча игнорирует кривой PNG, и без этой проверки мы не узнаём, где рвётся цепочка.
+function pngInfo(file) {
+    try {
+        const b = fs.readFileSync(file);
+        const isPng = b.length > 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+        const w = isPng ? b.readUInt32BE(16) : 0;
+        const h = isPng ? b.readUInt32BE(20) : 0;
+        const verdict = !isPng ? '⚠️ ЭТО НЕ PNG — игра его молча отбросит'
+            : (w === 64 && (h === 32 || h === 64)) || (w === 128 && h === 128)
+                ? 'формат ок'
+                : `⚠️ нестандартный размер — ожидается 64x32/64x64, игра может не отрисовать скин`;
+        console.log(`[SkinManager] PNG скина: ${w}x${h}, ${b.length} Б — ${verdict}`);
+        return { ok: isPng, w, h, size: b.length };
+    } catch (e) {
+        console.error(`[SkinManager] Не прочитал PNG скина (${file}): ${e.message}`);
+        return { ok: false, w: 0, h: 0, size: 0 };
+    }
+}
+
 function applyWideSkin(gameDir, skinPath, packFormat) {
     try {
+        const info = pngInfo(skinPath);
         const fmt = packFormat || packFormatFor('');
 
         // pack.mcmeta: точный формат + широкий диапазон supported_formats (1.20.2+)
@@ -70,7 +91,7 @@ function applyWideSkin(gameDir, skinPath, packFormat) {
         if (!fs.existsSync(packsDir)) fs.mkdirSync(packsDir, { recursive: true });
         const packPath = path.join(packsDir, packName);
         zip.writeZip(packPath);
-        console.log(`[SkinManager] Ресурсупаковка создана: ${packPath} (pack_format ${fmt})`);
+        console.log(`[SkinManager] Ресурсупаковка создана: ${packPath} (pack_format ${fmt}, записей в zip: ${zip.getEntries().length}, скин ${info.w}x${info.h}:${info.ok ? 'ok' : 'БИТЫЙ'})`);
 
         enablePackInOptions(gameDir, packName);
     } catch (error) {
