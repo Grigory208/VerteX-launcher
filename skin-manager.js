@@ -64,13 +64,20 @@ function applyWideSkin(gameDir, skinPath, packFormat) {
         const info = pngInfo(skinPath);
         const fmt = packFormat || packFormatFor('');
 
-        // pack.mcmeta: точный формат + широкий диапазон. С 1.21.9 (формат > 64) обязательны
-        // min_format/max_format (иначе игра выкидывает пак: "missing mandatory fields
-        // min_format and max_format");supported_formats нужен только 1.20.2–1.21.8 и
-        // новыми версиями игнорируется, а min/max_format старыми версиями — не читается.
-        // common pack.mcmeta валиден и там, и там. Bare-int = major с любым minor.
-        const pack = { pack_format: fmt, min_format: fmt, max_format: 999, description: 'VerteX Local Skin' };
-        if (fmt >= 18) pack.supported_formats = { min_inclusive: fmt, max_inclusive: 999 };
+        // pack.mcmeta: схемы старой и новой игры НЕСОВМЕСТИМЫ в одном файле:
+        // - < 1.21.9 (формат ≤ 64): читают pack_format + (опц.) supported_formats;
+        //   min_format/max_format просто не читают;
+        // - ≥ 1.21.9 (формат > 64): ОБЯЗАТЕЛЬНЫ min_format/max_format, а присутствие
+        //   supported_formats — жёсткая ошибка («Pack key supported_formats is deprecated
+        //   starting from pack format 65») и пак выкидывается. Bare-int = major с любым minor.
+        // Пак пересобирается при каждом запуске под конкретную версию — выбираем схему по fmt.
+        const pack = { pack_format: fmt, description: 'VerteX Local Skin' };
+        if (fmt > 64) {
+            pack.min_format = fmt;
+            pack.max_format = 999;
+        } else if (fmt >= 18) {
+            pack.supported_formats = { min_inclusive: fmt, max_inclusive: 999 };
+        }
         const packMeta = { pack };
 
         const zip = new AdmZip();
