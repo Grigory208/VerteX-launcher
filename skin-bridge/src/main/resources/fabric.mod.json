@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "vertexskinbridge",
+  "version": "${version}",
+  "name": "VertexSkinBridge",
+  "description": "Мост скина лаунчера VerteX: применяет локальный скин (ресурспак MyLocalSkin) на любом сервере, перебивая серверные текстуры профиля.",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["ru.vertex.skinbridge.VertexSkinBridgeClient"]
+  },
+  "mixins": ["vertexskinbridge.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21",
+    "java": ">=21"
+  }
+}
