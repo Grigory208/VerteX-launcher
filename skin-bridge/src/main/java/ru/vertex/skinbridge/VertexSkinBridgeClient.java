@@ -9,6 +9,6 @@ public class VertexSkinBridgeClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        LOGGER.info("[VertexSkinBridge] активен: если лаунчер положил vertex-skin/local.png, скин лаунчера перебивает серверный.");
+        LOGGER.info("[VertexSkinBridge] активен: свой скин через vertex-skin/local.png, чужие — через сервер скинов VerteX.");
     }
 }

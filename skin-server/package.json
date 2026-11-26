@@ -1,0 +1,17 @@
+{
+  "name": "vertex-skin-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VerteX Skin Server — единая точка выдачи скинов для VertexSkinBridge",
+  "main": "api/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "serverless-http": "^3.2.0"
+  }
+}

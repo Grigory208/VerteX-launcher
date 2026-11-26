@@ -8,20 +8,27 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import ru.vertex.skinbridge.Bridge;
+import ru.vertex.skinbridge.SkinService;
 
 /**
- * Перехватываем выбор скина любого игрока и для СВОЕГО (локального) игрока возвращаем
- * стандартный скин (DefaultSkinHelper) — тот, который ресурспак лаунчера уже перерисовал
- * нашим PNG. Серверные текстуры профиля (SkinsRestorer и т.п.) для себя игнорируем.
+ * 1) СВОЙ игрок: лаунчер положил vertex-skin/local.png — форсим стандартный скин,
+ *    который ресурспак MyLocalSkin.zip уже перерисовал нашим PNG (перебивает SkinsRestorer).
+ * 2) ЧУЖИЕ игроки без серверных текстур: инектор через SkinService — скин качается
+ *    с сервера скинов VerteX (свой серв → Mojang → внешние хостинги).
  */
 @Mixin(AbstractClientPlayerEntity.class)
 public abstract class AbstractClientPlayerEntityMixin {
 
     @Inject(method = "getSkinTextures", at = @At("HEAD"), cancellable = true)
-    private void vertex$forceLauncherSkin(CallbackInfoReturnable<SkinTextures> cir) {
+    private void vertex$injectSkins(CallbackInfoReturnable<SkinTextures> cir) {
         AbstractClientPlayerEntity self = (AbstractClientPlayerEntity) (Object) this;
         if (Bridge.forceDefaultSkin(self)) {
             cir.setReturnValue(DefaultSkinHelper.getSkinTextures(self.getUuid()));
+            return;
+        }
+        SkinTextures injected = SkinService.resolve(self);
+        if (injected != null) {
+            cir.setReturnValue(injected);
         }
     }
 }
