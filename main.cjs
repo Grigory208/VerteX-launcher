@@ -13,9 +13,9 @@ const { vanilla, fabric, quilt, forge, neoforge } = require('tomate-loaders');
 // ⬇️ ПОДКЛЮЧАЕМ НАШ МЕНЕДЖЕР СКИНОВ ⬇️
 const { applyWideSkin, packFormatFor } = require('./skin-manager');
 
-// Сервер скинов VerteX (Express на Vercel/layero): скины свои → Mojang → внешние хостинги.
-// ПОСЛЕ деплоя skin-server/ замени URL ниже (или задай env VERTEX_SKIN_SERVER).
-const SKIN_SERVER_URL = (process.env.VERTEX_SKIN_SERVER || '').replace(/\/+$/, '');
+// Сервер скинов VerteX (Express, деплой на layero): своя база → Mojang → внешние хостинги.
+// Репо сервера: Grigory208/express-js-on-vercel. Можно переопределить через env VERTEX_SKIN_SERVER.
+const SKIN_SERVER_URL = (process.env.VERTEX_SKIN_SERVER || 'https://express-js-on-vercel-main.layero.app').replace(/\/+$/, '');
 
 app.setName('Vertex Launcher');
 
@@ -630,16 +630,6 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
             console.error('[BACKEND] VertexSkinBridge:', bridgeErr.message);
         }
 
-        // Регистрируем скин за ником в базе через наш сервер (skin_claims):
-        // тогда другие игроки VerteX видят твой скин на оффлайн-серверах через инектор.
-        if (SKIN_SERVER_URL) {
-            fetch(`${SKIN_SERVER_URL}/claims`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: username, skinUrl: skinUrlArg, skinType: 'classic' }),
-            }).then(r => { if (r.ok) console.log('[BACKEND] ✅ Скин зарегистрирован на сервере скинов за ником', username); })
-              .catch(() => console.warn('[BACKEND] Сервер скинов недоступен — claim не отправлен.'));
-        }
     }
     // ⬆️ КОНЕЦ НОВОГО БЛОКА ⬆️
 
