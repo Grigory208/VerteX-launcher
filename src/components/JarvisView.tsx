@@ -10,6 +10,7 @@ import { checkPackCompat, compatToText, type CompatReport } from '@/lib/jarvis/c
 import { suggestModNames, javaFor } from '@/lib/jarvis/builder';
 import { LAUNCHER_KB, errorExplainPrompt } from '@/lib/jarvis/kb';
 import { Markdown } from '@/lib/jarvis/markdown';
+import { renderTex, specFromText, PAINTER_PROMPT, type TexKind } from '@/lib/jarvis/painter';
 
 interface JarvisViewProps {
   auth: ReturnType<typeof useAuth>;
@@ -23,6 +24,7 @@ interface ChatEntry {
   draftMods?: ModpackMod[];
   draftMeta?: { mcVersion: string; loader: string; name: string };
   table?: { head: string[]; rows: string[][] };
+  image?: { dataUrl: string; kind: TexKind; query: string; width: number; height: number };
 }
 
 const HELLO =
@@ -156,6 +158,37 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     onViewChange('play');
   }, [onViewChange]);
 
+  const handlePaint = useCallback(async (query: string) => {
+    const t = query.toLowerCase();
+    const kind: TexKind = /плащ/.test(t) ? 'cape'
+      : /скин/.test(t) ? 'skin'
+      : /(?:hud|хад|панел|интерфейс)/.test(t) ? 'hud'
+      : 'item';
+    push({ role: 'jarvis', text: `Рисую ${kind === 'skin' ? 'скин 64x64' : kind === 'cape' ? 'плащ 64x32' : kind === 'hud' ? 'HUD-панель 128x32' : 'текстуру 16x16'}: «${query}»...` });
+    let specText = '';
+    try {
+      specText = await brainAnswer([{ role: 'user', content: `Запрос: ${query}. Тип: ${kind}` }], PAINTER_PROMPT);
+    } catch { /* без мозга — дефолтная палитра из хэша запроса */ }
+    const spec = specFromText(kind, query, specText);
+    const img = renderTex(spec);
+    push({ role: 'jarvis', text: `Готово: ${img.width}x${img.height}, паттерн «${spec.pattern}», палитра ${spec.colors.join(' ')}.`, image: { dataUrl: img.dataUrl, kind, query, width: img.width, height: img.height } });
+  }, []);
+
+  const handleSaveImage = useCallback(async (img: NonNullable<ChatEntry['image']>) => {
+    const gamePath = readLauncherGamePath();
+    const api = (window as unknown as { electronAPI?: { jarvisSaveImage?: (o: unknown) => Promise<{ success: boolean; path?: string; error?: string }> } }).electronAPI;
+    if (!api?.jarvisSaveImage) {
+      push({ role: 'jarvis', text: 'Сохранение доступно только в приложении лаунчера.' });
+      return;
+    }
+    if (!gamePath) {
+      push({ role: 'jarvis', text: 'Укажи путь к игре в настройках (⚙), тогда PNG сохранится в jarvis-art. Для мода перенеси файл в src/main/resources/assets/<modid>/textures/ своего проекта в jarvis-mods.' });
+      return;
+    }
+    const res = await api.jarvisSaveImage({ dataUrl: img.dataUrl, fileName: `${img.kind}-${Date.now()}`, gamePath });
+    push({ role: 'jarvis', text: res.success ? `Сохранил: \`${res.path}\`` : `Не сохранил: ${res.error}` });
+  }, []);
+
   const handleModDev = useCallback(async (query: string) => {
     const gamePath = readLauncherGamePath();
     if (!gamePath) {
@@ -210,6 +243,8 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
         await handleCompat(intent.packName);
       } else if (intent.kind === 'moddev') {
         await handleModDev(intent.query);
+      } else if (intent.kind === 'paint') {
+        await handlePaint(intent.query);
       } else if (intent.kind === 'find') {
         await handleFind(intent.query, intent.mcVersion, intent.loader);
       } else if (intent.kind === 'launch') {
@@ -227,7 +262,7 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
     } finally {
       setBusy(false);
     }
-  }, [entries, handleBuild, handleCompat, handleFind, handleLaunch, handleModDev]);
+  }, [entries, handleBuild, handleCompat, handleFind, handleLaunch, handleModDev, handlePaint]);
 
   const onSend = () => {
     const t = input.trim();
@@ -303,6 +338,20 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
                 <div className={`flex items-center gap-1.5 mb-1.5 text-xs ${e.report.ok ? 'text-green-400' : 'text-amber-400'}`}>
                   {e.report.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                   {e.report.ok ? 'Совместимость: OK' : 'Совместимость: есть проблемы'}
+                </div>
+              )}
+              {e.image && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <img
+                    src={e.image.dataUrl}
+                    alt={e.image.kind}
+                    className="border border-launcher-border rounded"
+                    style={{ imageRendering: 'pixelated', width: e.image.kind === 'item' || e.image.kind === 'block' ? 96 : 128, height: 'auto' }}
+                  />
+                  <div className="flex gap-1.5">
+                    <button onClick={() => void handleSaveImage(e.image!)} className="px-2 py-1 rounded bg-launcher-accent text-white text-xs">Сохранить PNG</button>
+                    <button onClick={() => void handlePaint(e.image!.query)} className="px-2 py-1 rounded border border-launcher-border text-xs">Ещё вариант</button>
+                  </div>
                 </div>
               )}
               {e.draftMods && e.draftMeta && (

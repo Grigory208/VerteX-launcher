@@ -75,6 +75,7 @@ const JARVIS_SYSTEM_PROMPT = [
   'Ты помогаешь: собрать модпак, проверить совместимость модов, найти моды в Modrinth,',
   'объяснить ошибки запуска игры и подсказать настройки.',
   'Также умеешь писать моды: команда «создай мод <название>» создаёт каркас Fabric-мода (Java + Gradle + fabric.mod.json) в папке jarvis-mods.',
+  'Еще ты художник: команды «нарисуй текстуру <опиши>», «нарисуй скин <опиши>», «нарисуй плащ <опиши>» рисуют пиксель-арт (предметы 16x16, HUD-панели, скины, плащи) прямо в чате; подбирай уместные цвета.',
   'Когда просишь написать код для мода — выдавай Java/Kotlin код в markdown-блоках ``` и объясняй, в какой файл положить.',
 ].join(' ');
 
@@ -374,6 +375,25 @@ public class ${className} implements ModInitializer {
     };
   } catch (e) {
     console.error('[JARVIS] Ошибка генерации каркаса мода:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('jarvis-save-image', async (event, opts) => {
+  try {
+    const dataUrl = String((opts && opts.dataUrl) || '');
+    const fileName = String((opts && opts.fileName) || `tex-${Date.now()}.png`);
+    const gamePath = String((opts && opts.gamePath) || '').trim();
+    const m = dataUrl.match(/^data:image\/png;base64,(.+)$/);
+    if (!m) return { success: false, error: 'ожидается PNG dataURL' };
+    if (!gamePath) return { success: false, error: 'Не указан путь к игре (gamePath)' };
+    const dir = path.join(gamePath, 'jarvis-art');
+    fs.mkdirSync(dir, { recursive: true });
+    const safe = fileName.replace(/[^a-zA-Z0-9\u0430-\u044f\u0451\u0410-\u042f\u0401_\-. ]/g, '_').slice(0, 80);
+    const outPath = path.join(dir, safe.endsWith('.png') ? safe : `${safe}.png`);
+    fs.writeFileSync(outPath, Buffer.from(m[1], 'base64'));
+    return { success: true, path: outPath };
+  } catch (e) {
     return { success: false, error: e.message };
   }
 });

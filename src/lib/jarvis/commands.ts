@@ -8,6 +8,7 @@ export type JarvisIntent =
   | { kind: 'build'; mcVersion?: string; loader?: string; modNames: string[] }
   | { kind: 'compat'; packName?: string }
   | { kind: 'moddev'; query: string }
+  | { kind: 'paint'; query: string }
   | { kind: 'find'; query: string; mcVersion?: string; loader?: string }
   | { kind: 'launch'; mcVersion?: string }
   | { kind: 'chat' };
@@ -69,6 +70,12 @@ export function parseCommand(text: string): JarvisIntent {
     }
     modNames = modNames.filter((x) => x && !x.match(/^1\.\d/) && !extractLoader(x));
     return { kind: 'build', mcVersion, loader: loader ?? 'fabric', modNames };
+  }
+
+  // Нарисуй текстуру / скин / плащ / HUD-панель (художник рисует на canvas по спеке мозга).
+  if (/(?:нарисуй|рисуй|сгенерируй|создай|сделай|подрисуй)/.test(t) &&
+      /(?:текстур|скин|плащ|иконк|hud|хад|панел|интерфейс)/.test(t)) {
+    return { kind: 'paint', query: text.trim() };
   }
 
   // Проверь совместимость [сборки <название>]
