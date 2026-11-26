@@ -601,6 +601,28 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
         } catch (skinError) {
             console.error('[BACKEND] ❌ Не удалось применить скин:', skinError.message);
         }
+
+        // VertexSkinBridge: клиентский мод перебивает серверные текстуры профиля (SkinsRestorer и
+        // т.п.) на fabric-запусках — мод возвращает стандартный скин, который ресурспак выше уже
+        // перерисовал нашим PNG. Ставим jar в mods/ один раз, скин обновляем при каждом запуске.
+        try {
+            const modJar = path.join(__dirname, 'resources', 'mods', 'vertexskinbridge-1.0.0.jar');
+            if (String(loader).toLowerCase() === 'fabric' && fs.existsSync(modJar)) {
+                const modsDir = path.join(gameDirectory, 'mods');
+                if (!fs.existsSync(modsDir)) fs.mkdirSync(modsDir, { recursive: true });
+                const modDst = path.join(modsDir, 'vertexskinbridge-1.0.0.jar');
+                if (!fs.existsSync(modDst)) {
+                    fs.copyFileSync(modJar, modDst);
+                    console.log('[BACKEND] ✅ VertexSkinBridge установлен в mods/');
+                }
+                const vsDir = path.join(gameDirectory, 'vertex-skin');
+                if (!fs.existsSync(vsDir)) fs.mkdirSync(vsDir, { recursive: true });
+                fs.copyFileSync(tempSkinPath, path.join(vsDir, 'local.png'));
+                console.log('[BACKEND] ✅ vertex-skin/local.png обновлён для VertexSkinBridge.');
+            }
+        } catch (bridgeErr) {
+            console.error('[BACKEND] VertexSkinBridge:', bridgeErr.message);
+        }
     }
     // ⬆️ КОНЕЦ НОВОГО БЛОКА ⬆️
 
