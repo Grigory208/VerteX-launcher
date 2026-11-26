@@ -25,6 +25,7 @@ interface ChatEntry {
   draftMeta?: { mcVersion: string; loader: string; name: string };
   table?: { head: string[]; rows: string[][] };
   image?: { dataUrl: string; kind: TexKind; query: string; width: number; height: number };
+  skinUrl?: string; // публичная ссылка на применённый скин — для /skin url на серверах
 }
 
 const HELLO =
@@ -209,11 +210,12 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
         user_id: auth.session.user.id,
       });
       if (insErr) throw insErr;
+      const publicUrl = urlData.publicUrl;
       push({
         role: 'jarvis',
         text:
-          'Скин применён ✅ Теперь просто запусти игру — при старте лаунчер скачает его и пересоберёт ресурспак MyLocalSkin с нужным pack_format под твою версию.\n' +
-          'Нюанс: если на сервере стоит скин-плагин (SkinsRestorer и т.п.), он перекроет ресурспак своим скином — против этого позже будет клиентский мод.',
+          'Скин применён ✅ Теперь просто запусти игру — при старте лаунчер скачает его и пересоберёт ресурспак MyLocalSkin с нужным pack_format под твою версию.',
+        skinUrl: publicUrl,
       });
     } catch (e) {
       push({ role: 'jarvis', text: `Не смог применить скин: ${(e as Error).message}` });
@@ -370,6 +372,18 @@ export function JarvisView({ auth, onViewChange }: JarvisViewProps) {
                   {e.report.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                   {e.report.ok ? 'Совместимость: OK' : 'Совместимость: есть проблемы'}
                 </div>
+              )}
+              {e.skinUrl && (
+                <button
+                  onClick={(ev) => {
+                    void navigator.clipboard.writeText(e.skinUrl!);
+                    ev.currentTarget.textContent = 'Ссылка скопирована ✅';
+                  }}
+                  className="mt-2 w-full px-2 py-1.5 rounded border border-launcher-border text-xs text-left"
+                  title="На серверах со SkinsRestorer набери в чате игры: /skin url <ссылка> classic"
+                >
+                  Скопировать ссылку для сервера (в игре: /skin url ← вставить → classic)
+                </button>
               )}
               {e.image && (
                 <div className="mt-2 flex flex-col gap-1.5">
