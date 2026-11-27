@@ -610,17 +610,17 @@ ipcMain.handle('launch-minecraft', async (event, args) => {
         // т.п.) на fabric-запусках — мод возвращает стандартный скин, который ресурспак выше уже
         // перерисовал нашим PNG. Ставим jar в mods/ один раз, скин обновляем при каждом запуске.
         try {
-            const modJar = path.join(__dirname, 'resources', 'mods', 'vertexskinbridge-1.0.2.jar');
+            const modJar = path.join(__dirname, 'resources', 'mods', 'vertexskinbridge-1.0.3.jar');
             if (String(loader).toLowerCase() === 'fabric' && fs.existsSync(modJar)) {
                 const modsDir = path.join(gameDirectory, 'mods');
                 if (!fs.existsSync(modsDir)) fs.mkdirSync(modsDir, { recursive: true });
-                const modDst = path.join(modsDir, 'vertexskinbridge-1.0.2.jar');
+                const modDst = path.join(modsDir, 'vertexskinbridge-1.0.3.jar');
                 // Всегда перезаписываем: обновлённый jar из репо должен попадать в игру.
                 fs.copyFileSync(modJar, modDst);
                 console.log('[BACKEND] ✅ VertexSkinBridge установлен в mods/');
                 // Удаляем старые версии мода (иначе Fabric загрузит обе и крашнется).
                 for (const f of fs.readdirSync(modsDir)) {
-                    if (/^vertexskinbridge-\d/.test(f) && f !== 'vertexskinbridge-1.0.2.jar') {
+                    if (/^vertexskinbridge-\d/.test(f) && f !== 'vertexskinbridge-1.0.3.jar') {
                         try { fs.unlinkSync(path.join(modsDir, f)); console.log('[BACKEND] 🧹 Удалён старый мод:', f); } catch (e) {}
                     }
                 }
