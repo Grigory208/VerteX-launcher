@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getHardwareInfo: () => ipcRenderer.invoke('get-hardware-info'),
+  jarvisChat: (messages) => ipcRenderer.invoke('jarvis-chat', messages),
+  jarvisScaffoldMod: (opts) => ipcRenderer.invoke('jarvis-scaffold-mod', opts),
+  jarvisSaveImage: (opts) => ipcRenderer.invoke('jarvis-save-image', opts),
   chooseGameFolder: () => ipcRenderer.invoke('choose-game-folder'),
   getLauncherSettings: () => ipcRenderer.invoke('get-launcher-settings'),
   saveLauncherSettings: (settings) => ipcRenderer.invoke('save-launcher-settings', settings),

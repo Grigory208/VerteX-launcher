@@ -7,6 +7,7 @@ import {
   Play, Settings2, Cpu, MemoryStick, HardDrive, Monitor, CheckCircle2, Download, Info, AlertTriangle, Layers, Package, RefreshCw, FolderUp, Trash2, ChevronDown
 } from 'lucide-react';
 import { SettingsModal } from '@/components/SettingsModal';
+import { errorExplainPrompt } from '@/lib/jarvis/kb';
 
 interface PlayViewProps {
   auth: ReturnType<typeof useAuth>;
@@ -14,6 +15,14 @@ interface PlayViewProps {
 }
 
 interface HardwareInfo { cpu: string; ram: string; disk: string; gpu: string; }
+
+/** Возвращает результат промиса до ms мс, иначе null: сеть не должна висеть минуты. */
+function raceTimeout<T>(p: PromiseLike<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(null); });
+  });
+}
 
 const FALLBACK_HARDWARE: HardwareInfo = { cpu: 'Определение...', ram: 'Определение...', disk: 'Определение...', gpu: 'Определение...' };
 const MC_VERSIONS_STORAGE = 'vertex-installed-versions';
@@ -144,14 +153,34 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
   }, [syncWithDisk]);
 
   const fetchData = useCallback(async () => {
+    // Мгновенный старт из локального кеша; сеть (Supabase) догружается в фоне с таймаутом.
+    try {
+      const cachedClients = localStorage.getItem('vertex-clients-cache');
+      const cachedModpacks = localStorage.getItem('vertex-modpacks-cache');
+      if (cachedClients) setClients(JSON.parse(cachedClients));
+      if (cachedModpacks) setModpacks(JSON.parse(cachedModpacks));
+      if (cachedClients || cachedModpacks) setLoading(false);
+    } catch { /* битый кеш — игнорируем */ }
+
     const [clientsRes, modpacksRes] = await Promise.all([
-      supabase.from('clients').select('*').order('created_at', { ascending: false }),
-      supabase.from('modpacks').select('*').order('updated_at', { ascending: false })
+      raceTimeout(supabase.from('clients').select('*').order('created_at', { ascending: false }), 10000),
+      raceTimeout(supabase.from('modpacks').select('*').order('updated_at', { ascending: false }), 10000)
     ]);
+    if (!clientsRes || !modpacksRes) {
+      // Сеть не ответила за 10 с: работаем на кеше, не крутим спиннер.
+      if (!localStorage.getItem('vertex-clients-cache')) setClients([]);
+      if (!localStorage.getItem('vertex-modpacks-cache')) setModpacks([]);
+      setImportedPacks(JSON.parse(localStorage.getItem('vertex-imported-modpacks') || '[]'));
+      setLoading(false);
+      return;
+    }
     
     const clientsList = (clientsRes.data as Client[]) ?? [];
     const modpacksList = (modpacksRes.data as Modpack[]) ?? [];
     const importedList = JSON.parse(localStorage.getItem('vertex-imported-modpacks') || '[]');
+
+    localStorage.setItem('vertex-clients-cache', JSON.stringify(clientsList));
+    localStorage.setItem('vertex-modpacks-cache', JSON.stringify(modpacksList));
     
     setClients(clientsList);
     setModpacks(modpacksList);
@@ -324,6 +353,20 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
       if (mcVersion.startsWith('1.12') || mcVersion.startsWith('1.16')) loaderVersionToPass = '0.15.11';
     }
 
+    // Активный скин игрока из Supabase -> в запуск (ресурсупаковка собирается в main.cjs)
+    let skinUrl: string | undefined = undefined;
+    if (auth.session) {
+      try {
+        const { data: skinRow } = await supabase
+          .from('skins')
+          .select('skin_url')
+          .eq('user_id', auth.session.user.id)
+          .eq('active', true)
+          .maybeSingle();
+        skinUrl = skinRow?.skin_url ?? undefined;
+      } catch { /* нет скина — игра стартует с дефолтным */ }
+    }
+
     const settings = readLauncherSettings();
     const api = (window as any).electronAPI;
 
@@ -341,17 +384,29 @@ export function PlayView({ auth, onInstalledChange }: PlayViewProps) {
         loader: currentLoader, loaderVersion: loaderVersionToPass,
         javaPath: settings.javaPath, javaArgs: selectedModpack ? packJavaArgs : settings.javaArgs,
         gamePath: settings.gamePath,
-        importedPackName: importedPackName
+        importedPackName: importedPackName,
+        skinUrl: skinUrl
       });
 
       if (result.success) {
         setLaunched(true);
         setTimeout(() => setLaunched(false), 5000);
       } else {
-        setLaunchError(result.error ?? 'Не удалось запустить игру');
+        const errMsg = result.error ?? 'Не удалось запустить игру';
+        setLaunchError(errMsg);
+        // Мост в JARVIS: пусть ассистент объяснит ошибку запуска.
+        try {
+          sessionStorage.setItem('jarvis-pending-error', errorExplainPrompt(errMsg));
+          window.dispatchEvent(new Event('jarvis-explain-error'));
+        } catch { /* sessionStorage может быть недоступен */ }
       }
     } catch (err: any) {
-      setLaunchError(err.message || 'Ошибка запуска');
+      const errMsg = err.message || 'Ошибка запуска';
+      setLaunchError(errMsg);
+      try {
+        sessionStorage.setItem('jarvis-pending-error', errorExplainPrompt(errMsg));
+        window.dispatchEvent(new Event('jarvis-explain-error'));
+      } catch { /* sessionStorage может быть недоступен */ }
     } finally {
       setLaunching(false);
     }

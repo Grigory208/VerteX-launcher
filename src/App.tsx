@@ -8,6 +8,7 @@ import { ModpackEditorView } from '@/components/ModpackEditorView';
 import { VersionsView } from '@/components/VersionsView';
 import { ImportView } from '@/components/ImportView';
 import { AdminView } from '@/components/AdminView';
+import { JarvisView } from '@/components/JarvisView';
 import { EditorToolbar } from '@/components/EditorToolbar';
 import { EditToggleButton } from '@/components/EditToggleButton';
 import { EditorOverlay } from '@/components/EditorOverlay';
@@ -42,6 +43,13 @@ function AppContent() {
     return () => window.removeEventListener('navigate-to-modpacks', handler);
   }, []);
 
+  // Мост ошибок запуска: PlayView → вкладка JARVIS (объяснение ошибки).
+  useEffect(() => {
+    const nav = () => setActiveView('jarvis');
+    window.addEventListener('jarvis-explain-error', nav);
+    return () => window.removeEventListener('jarvis-explain-error', nav);
+  }, []);
+
   return (
     <div className="h-screen w-screen flex bg-launcher-bg text-launcher-text overflow-hidden relative">
       <div className={`flex w-full h-full transition-all duration-300 ${editMode ? 'scale-[0.96] opacity-50 grayscale-[30%]' : ''}`}>
@@ -67,6 +75,7 @@ function AppContent() {
           {effectiveView === 'modpacks' && <ModpackEditorView />}
           {effectiveView === 'versions' && <VersionsView />}
           {effectiveView === 'import' && <ImportView />}
+          {effectiveView === 'jarvis' && <JarvisView auth={auth} onViewChange={setActiveView} />}
           {effectiveView === 'admin' && auth.isAdmin && <AdminView />}
         </main>
       </div>

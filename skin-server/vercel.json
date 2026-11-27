@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/skin/:name", "destination": "/api" },
+    { "source": "/claims", "destination": "/api" },
+    { "source": "/health", "destination": "/api" }
+  ]
+}

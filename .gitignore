@@ -21,3 +21,6 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# локальные ресурсы (authlib-injector качается на месте)
+resources/
