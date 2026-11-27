@@ -22,13 +22,17 @@ public abstract class AbstractClientPlayerEntityMixin {
     @Inject(method = "getSkinTextures", at = @At("HEAD"), cancellable = true)
     private void vertex$injectSkins(CallbackInfoReturnable<SkinTextures> cir) {
         AbstractClientPlayerEntity self = (AbstractClientPlayerEntity) (Object) this;
-        if (Bridge.forceDefaultSkin(self)) {
-            cir.setReturnValue(DefaultSkinHelper.getSkinTextures(self.getUuid()));
-            return;
-        }
-        SkinTextures injected = SkinService.resolve(self);
-        if (injected != null) {
-            cir.setReturnValue(injected);
+        try {
+            if (Bridge.forceDefaultSkin(self)) {
+                cir.setReturnValue(DefaultSkinHelper.getSkinTextures(self.getUuid()));
+                return;
+            }
+            SkinTextures injected = SkinService.resolve(self, cir.getReturnValue());
+            if (injected != null) {
+                cir.setReturnValue(injected);
+            }
+        } catch (Throwable t) {
+            // Мост не должен никогда ронять игру — на любую несовместимость молчим.
         }
     }
 }
